@@ -88,6 +88,10 @@ mkdir -p "$STATE"
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# Opt-in idle-worker pre-cache-expiry compaction (config/idle-compact); ships
+# inert, see bin/fm-idle-compact.sh's header for the full contract.
+# shellcheck source=bin/fm-idle-compact.sh
+. "$SCRIPT_DIR/fm-idle-compact.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -846,6 +850,12 @@ while :; do
   # repost after grace, and escalate once if the recovery turn is also missed.
   # No conversation scraping; unresolved records are never silently expired.
   fm_pending_reply_tick "$STATE" || true
+
+  # Opt-in idle-worker pre-cache-expiry compaction. A no-op single [ -f ] check
+  # when config/idle-compact is absent; otherwise sweeps state/*.meta on its
+  # own FM_IDLE_COMPACT_INTERVAL cadence. Never surfaces a wake itself - a
+  # deferred or failed attempt is silent routine, retried on a later sweep.
+  fm_idle_compact_tick "$STATE" || true
 
   # Process-to-event liveness repair. This never discovers a result by polling:
   # each registered source has its own child blocking on that source, and this

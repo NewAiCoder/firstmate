@@ -75,6 +75,7 @@ config/herdr-presentation-spaces  optional "off" opt-out from, or "on" opt-in to
 config/trace-context  optional presence flag enabling default-off native W3C trace-context propagation to spawned agents; LOCAL, gitignored; inherited by secondmate homes; see docs/configuration.md "Trace context propagation" and docs/trace-context.md
 config/cmux-socket-password  optional cmux control-socket password; LOCAL, gitignored; read fresh on every cmux CLI call and passed through without ever overriding an operator's own ambient CMUX_SOCKET_PASSWORD when absent (docs/cmux-backend.md "Setup")
 config/wedge-alarm  optional away-mode wedge-alarm active-alert directives; LOCAL, gitignored; absent means auto (macOS Notification Center when available); see docs/wedge-alarm.md
+config/idle-compact  optional idle threshold in minutes (default 30) enabling opt-in pre-cache-expiry compaction of a genuinely idle Claude crewmate; LOCAL, gitignored; absent = feature off; see docs/configuration.md "Idle-worker pre-compaction" and bin/fm-idle-compact.sh
 config/x-mode.env    generated Relay watcher cadence; LOCAL, gitignored; source before arming watcher when present
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history
