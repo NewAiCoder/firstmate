@@ -211,18 +211,30 @@ tmux -L "$SOCKET" send-keys -t "$WIN" C-u 2>/dev/null || true
 sleep 1
 
 # --- 4. once the pane is idle+empty again, the same episode completes:
-#        /compact is sent and the marker reaches phase=done -----------------
+#        /compact is sent, the marker settles, then reaches phase=done ------
 
 fm_idle_compact_tick "$STATE" "$CONFIG"
-if [ "$(fm_idle_compact_marker_field "$MARKER" phase)" != 'done' ]; then
-  fail "claude ($CLAUDE_VERSION): expected phase=done once the real composer read empty again, got '$(fm_idle_compact_marker_field "$MARKER" phase)'"
+if [ "$(fm_idle_compact_marker_field "$MARKER" phase)" != settling ]; then
+  fail "claude ($CLAUDE_VERSION): expected phase=settling once the real composer read empty again, got '$(fm_idle_compact_marker_field "$MARKER" phase)'"
 elif [ "$(wc -l < "$SENDLOG")" != 1 ] || [ "$(sent_task)" != "$TASK" ]; then
   fail "claude ($CLAUDE_VERSION): expected exactly one further send once the pane read empty again"
 else
   case "$(sent_message)" in
-    '/compact '*) pass "claude ($CLAUDE_VERSION): a real idle+empty composer after the save turn completes sends /compact and reaches phase=done" ;;
+    '/compact '*) pass "claude ($CLAUDE_VERSION): a real idle+empty composer after the save turn completes sends /compact and reaches phase=settling" ;;
     *) fail "claude ($CLAUDE_VERSION): expected the second send to be a literal /compact command, got '$(sent_message)'" ;;
   esac
+fi
+
+# FM_IDLE_COMPACT_INTERVAL=0 above also collapses the settle window's default
+# (one sweep interval), so the next tick captures the post-render baseline.
+: > "$SENDLOG"
+fm_idle_compact_tick "$STATE" "$CONFIG"
+if [ "$(fm_idle_compact_marker_field "$MARKER" phase)" != 'done' ]; then
+  fail "claude ($CLAUDE_VERSION): expected phase=done after the settle window elapsed, got '$(fm_idle_compact_marker_field "$MARKER" phase)'"
+elif [ -s "$SENDLOG" ]; then
+  fail "claude ($CLAUDE_VERSION): settling into phase=done must never send anything"
+else
+  pass "claude ($CLAUDE_VERSION): the settle sweep captures the post-render baseline and reaches phase=done without further sends"
 fi
 
 note "no message was ever actually submitted to the live claude process - fm_idle_compact_send was stubbed throughout, so no model tokens were spent"

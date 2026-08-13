@@ -7,8 +7,10 @@
 # Covers: config/idle-compact parsing (absent/empty/valid/invalid), the
 # eligibility intersection (kind, harness, idle age, reconciled crew state -
 # each exclusion arm on its own), the live safety gate (exact idle + exact
-# empty composer only), and the 3-phase state machine marker lifecycle
-# (no-marker -> save-sent -> done, and the reset-on-new-activity rule).
+# empty composer only), and the 4-phase state machine marker lifecycle
+# (no-marker -> save-sent -> settling -> done, the eligibility re-check
+# before /compact, the post-render settle capture, and the
+# reset-on-new-activity rule).
 #
 # Hermetic: fm_busy_classify, fm_backend_composer_state, and
 # fm_idle_compact_send are function-overridden per test (the same dependency-
@@ -286,7 +288,7 @@ test_safe_to_send_true_when_idle_and_empty() {
   ) || exit 1
 }
 
-# --- 3-phase marker state machine (fm_idle_compact_process_task) -----------
+# --- 4-phase marker state machine (fm_idle_compact_process_task) -----------
 # fm_busy_classify/fm_backend_composer_state are stubbed idle+empty (safe
 # throughout) unless a test says otherwise; fm_idle_compact_send is stubbed
 # to record calls to a log file, decoupling the state machine from
@@ -321,6 +323,7 @@ test_no_marker_eligible_sends_save_and_marks_savesent() {
       || fail "the marker must record phase=save-sent after the first send"
     [ "$(wc -l < "$log")" = 1 ] || fail "exactly one send (the save message) must have gone out"
     grep -q "precompact-notes.md" "$log" || fail "the save message must point at precompact-notes.md"
+    grep -q "key file paths" "$log" || fail "the save message must ask for key file paths (the documented save-content list)"
     pass "fm_idle_compact_process_task: no marker + eligible + safe sends the save message and records phase=save-sent"
   ) || exit 1
 }
@@ -384,12 +387,13 @@ test_savesent_no_turnended_yet_stays_savesent() {
   ) || exit 1
 }
 
-test_savesent_turnended_advanced_sends_compact_and_marks_done() {
+test_savesent_turnended_advanced_sends_compact_and_marks_settling() {
   (
     local dir log marker
     dir=$(new_dir sm-advance)
     write_task_meta "$dir/state" t1
     touch_status "$dir/state" t1 3600
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: parked")
     log="$dir/sends.log"; : > "$log"
     stub_always_safe
     stub_recording_send "$log"
@@ -398,8 +402,11 @@ test_savesent_turnended_advanced_sends_compact_and_marks_done() {
     touch "$dir/state/t1.turn-ended"
 
     fm_idle_compact_process_task "$dir/state" t1 30
-    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
-      || fail "a new turn-ended signature must advance the marker to phase=done"
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = settling ] \
+      || fail "a new turn-ended signature must advance the marker to phase=settling"
+    case "$(fm_idle_compact_marker_field "$marker" settle_epoch)" in
+      ''|*[!0-9]*) fail "phase=settling must record a numeric settle_epoch" ;;
+    esac
     [ "$(wc -l < "$log")" = 1 ] || fail "exactly one send (the /compact message) must have gone out"
     [ "$(cut -f2 "$log")" = t1 ] || fail "the send must target task t1"
     case "$(cut -f3 "$log")" in
@@ -408,7 +415,7 @@ test_savesent_turnended_advanced_sends_compact_and_marks_done() {
     esac
     grep -q "brief.md" "$log" || fail "the /compact focus text must point at the brief"
     grep -q "precompact-notes.md" "$log" || fail "the /compact focus text must point at the precompact notes"
-    pass "fm_idle_compact_process_task: a completed save turn sends /compact with focus text and records phase=done"
+    pass "fm_idle_compact_process_task: a completed save turn sends /compact with focus text and records phase=settling"
   ) || exit 1
 }
 
@@ -418,6 +425,7 @@ test_savesent_turnended_advanced_but_unsafe_defers() {
     dir=$(new_dir sm-advance-unsafe)
     write_task_meta "$dir/state" t1
     touch_status "$dir/state" t1 3600
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: parked")
     log="$dir/sends.log"; : > "$log"
     fm_busy_classify() { printf 'busy claude-hook'; }
     fm_backend_composer_state() { printf 'empty'; }
@@ -431,6 +439,88 @@ test_savesent_turnended_advanced_but_unsafe_defers() {
       || fail "a completed save turn into a now-busy pane must not advance past save-sent"
     [ ! -s "$log" ] || fail "/compact must never be sent while the pane reads busy"
     pass "fm_idle_compact_process_task: a completed save turn into an unsafe pane defers /compact to a later sweep"
+  ) || exit 1
+}
+
+test_savesent_turnended_advanced_but_crew_working_defers() {
+  (
+    local dir log marker
+    dir=$(new_dir sm-advance-midtask)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: working")
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    fm_idle_compact_marker_write "$marker" phase=save-sent "sent_epoch=$(date +%s)" "baseline_turnended=absent"
+    touch "$dir/state/t1.turn-ended"
+
+    fm_idle_compact_process_task "$dir/state" t1 30
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = save-sent ] \
+      || fail "a save-wait interrupted by new work (crew state working) must not advance past save-sent"
+    [ ! -s "$log" ] || fail "/compact must never be sent while the reconciled crew state reads working, even between turns"
+    pass "fm_idle_compact_process_task: a turn-ended advance from unrelated mid-task work never triggers /compact (eligibility is re-checked)"
+  ) || exit 1
+}
+
+test_settling_within_window_defers_capture() {
+  (
+    local dir log marker
+    dir=$(new_dir sm-settling-wait)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    fm_idle_compact_marker_write "$marker" phase=settling "settle_epoch=$(date +%s)"
+
+    FM_IDLE_COMPACT_SETTLE_SECS=3600 fm_idle_compact_process_task "$dir/state" t1 30
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = settling ] \
+      || fail "inside the settle window the marker must stay phase=settling (no baseline captured yet)"
+    [ -z "$(fm_idle_compact_marker_field "$marker" pane_sig)" ] \
+      || fail "no pane signature may be captured before the compaction render has settled"
+    [ ! -s "$log" ] || fail "phase=settling must never send anything"
+    pass "fm_idle_compact_process_task: phase=settling inside the settle window defers baseline capture to a later sweep"
+  ) || exit 1
+}
+
+test_settling_past_window_records_done_and_next_sweep_is_noop() {
+  (
+    local dir log marker status_sig pane_sig
+    dir=$(new_dir sm-settling-done)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: parked")
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    # settle_epoch long past: by now the compaction summary has rendered, so
+    # the pane content captured below already includes it.
+    fm_idle_compact_marker_write "$marker" phase=settling "settle_epoch=1"
+
+    FM_IDLE_COMPACT_SETTLE_SECS=1 fm_idle_compact_process_task "$dir/state" t1 30
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
+      || fail "past the settle window the marker must advance to phase=done"
+    fm_idle_compact_task_context "$dir/state" t1
+    status_sig=$(fm_idle_compact_status_sig "$dir/state" t1)
+    # shellcheck disable=SC2031  # read within the same subshell that just set it above
+    pane_sig=$(fm_idle_compact_pane_sig "$FM_IDLE_COMPACT_BACKEND" "$FM_IDLE_COMPACT_TARGET" "$FM_IDLE_COMPACT_LABEL")
+    [ "$(fm_idle_compact_marker_field "$marker" status_sig)" = "$status_sig" ] \
+      || fail "phase=done must record the CURRENT (post-render) status signature"
+    [ "$(fm_idle_compact_marker_field "$marker" pane_sig)" = "$pane_sig" ] \
+      || fail "phase=done must record the CURRENT (post-render) pane signature"
+    [ ! -s "$log" ] || fail "settling into phase=done must never send anything"
+
+    # The self-trigger regression: the very next sweep sees its own baseline
+    # as unchanged and must NOT start a new save+compact episode.
+    fm_idle_compact_process_task "$dir/state" t1 30
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
+      || fail "the sweep after settling must keep phase=done, not restart the episode"
+    [ ! -s "$log" ] || fail "the compaction's own settled output must never re-trigger a save message"
+    pass "fm_idle_compact_process_task: the post-render baseline is captured at settle expiry and the episode never self-triggers"
   ) || exit 1
 }
 
@@ -625,9 +715,12 @@ test_no_marker_eligible_sends_save_and_marks_savesent
 test_no_marker_ineligible_creates_no_marker
 test_no_marker_unsafe_pane_defers_no_send
 test_savesent_no_turnended_yet_stays_savesent
-test_savesent_turnended_advanced_sends_compact_and_marks_done
+test_savesent_turnended_advanced_sends_compact_and_marks_settling
 test_savesent_turnended_advanced_but_unsafe_defers
+test_savesent_turnended_advanced_but_crew_working_defers
 test_savesent_timeout_abandons_without_compact
+test_settling_within_window_defers_capture
+test_settling_past_window_records_done_and_next_sweep_is_noop
 test_done_unchanged_signatures_is_noop
 test_done_status_change_clears_marker_and_restarts_episode
 test_done_pane_change_clears_marker

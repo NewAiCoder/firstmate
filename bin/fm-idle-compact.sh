@@ -36,18 +36,24 @@
 #     primitives the away-mode daemon's own injection boundary uses.
 #
 # A durable per-task marker at state/.idle-compact-<task> (named after the
-# existing .hb-surfaced-<task>/.seen-* convention) drives a 3-phase state
+# existing .hb-surfaced-<task>/.seen-* convention) drives a 4-phase state
 # machine so one idle episode produces at most one compaction:
 #   1. no marker: send a guarded message asking the crewmate to write its
 #      working state to data/<id>/precompact-notes.md, then record
 #      phase=save-sent with the current state/<id>.turn-ended signature.
 #   2. phase=save-sent: wait for a NEW turn-ended signature - proof the save
 #      turn actually completed, the same signal bin/fm-watch.sh's signal scan
-#      already trusts - before sending /compact with focus text; a bounded
+#      already trusts - then re-run the full eligibility check (the crew may
+#      have been steered back to work during the wait) and the live safety
+#      gate before sending /compact with focus text; a bounded
 #      FM_IDLE_COMPACT_SAVE_TIMEOUT_SECS abandons a turn that never
-#      completes. Once sent, record phase=done with the status-line and
-#      pane-tail signatures at that moment.
-#   3. phase=done: a changed status line or pane-tail signature (a new status
+#      completes. Once sent, record phase=settling with the send epoch.
+#   3. phase=settling: wait FM_IDLE_COMPACT_SETTLE_SECS (default one sweep
+#      interval) for the compaction summary to finish rendering, then record
+#      phase=done with the status-line and pane-tail signatures - captured
+#      after the render so the compaction's own output is baked into the
+#      baseline and never reads as new worker activity.
+#   4. phase=done: a changed status line or pane-tail signature (a new status
 #      append or new pane activity) clears the marker so the next idle
 #      episode is evaluated fresh.
 #
@@ -253,7 +259,7 @@ fm_idle_compact_safe_to_send() {  # <state> <task>
 # --- messages and delivery ---------------------------------------------------
 
 fm_idle_compact_save_message() {  # <task>
-  printf 'Idle-compact: your context cache is about to be compacted while you wait. Before that happens, write your open decision keys, current gate/step, and next actions to %s/%s/precompact-notes.md (create it if absent), then stop for this turn.' \
+  printf 'Idle-compact: your context cache is about to be compacted while you wait. Before that happens, write your open decision keys, current gate/step, next actions, and key file paths to %s/%s/precompact-notes.md (create it if absent), then stop for this turn.' \
     "$DATA" "$1"
 }
 
@@ -276,9 +282,13 @@ fm_idle_compact_send() {  # <state> <task> <message>
 # --- per-task state machine --------------------------------------------------
 
 # Phase 2: waits for the turn-ended signature to advance past the recorded
-# baseline (proof the save turn completed), then sends /compact.
-fm_idle_compact_advance_save_sent() {  # <state> <task> <marker>
-  local state=$1 task=$2 marker=$3 baseline sent_epoch save_timeout age cur_turnended
+# baseline (proof the save turn completed), re-checks full eligibility (the
+# reconciled crew state may have flipped to working during the wait - the
+# never-mid-task rule applies to the /compact send exactly as it does to the
+# first send), then sends /compact.
+fm_idle_compact_advance_save_sent() {  # <state> <task> <marker> <threshold-minutes>
+  local state=$1 task=$2 marker=$3 threshold_min=$4
+  local baseline sent_epoch save_timeout age cur_turnended
 
   fm_idle_compact_task_context "$state" "$task" || { rm -f "$marker"; return 0; }
   baseline=$(fm_idle_compact_marker_field "$marker" baseline_turnended)
@@ -302,13 +312,39 @@ fm_idle_compact_advance_save_sent() {  # <state> <task> <marker>
   cur_turnended=$(fm_idle_compact_turnended_sig "$state" "$task")
   [ "$cur_turnended" != "$baseline" ] || return 0
 
+  fm_idle_compact_eligible "$state" "$task" "$threshold_min" || return 0
   fm_idle_compact_safe_to_send "$state" "$task" || return 0
 
   if fm_idle_compact_send "$state" "$task" "$(fm_idle_compact_compact_message "$task")"; then
-    fm_idle_compact_marker_write "$marker" phase=done \
-      "status_sig=$(fm_idle_compact_status_sig "$state" "$task")" \
-      "pane_sig=$(fm_idle_compact_pane_sig "$FM_IDLE_COMPACT_BACKEND" "$FM_IDLE_COMPACT_TARGET" "$FM_IDLE_COMPACT_LABEL")"
+    fm_idle_compact_marker_write "$marker" phase=settling \
+      "settle_epoch=$(date +%s)"
   fi
+  return 0
+}
+
+# Phase 3: the /compact went out, but its summary has not necessarily finished
+# rendering yet. Capturing the done-phase baseline immediately would record a
+# pre-render pane hash, and the compaction summary's own render would then
+# read as "new pane activity" - clearing the marker and self-triggering a
+# brand-new save+compact episode every couple of sweeps. So the baseline is
+# captured on a LATER sweep, one settle window after the send, so the
+# feature's own output is baked into the recorded signatures and never counts
+# as worker activity.
+fm_idle_compact_advance_settling() {  # <state> <task> <marker>
+  local state=$1 task=$2 marker=$3 settle_epoch settle_secs age
+
+  fm_idle_compact_task_context "$state" "$task" || { rm -f "$marker"; return 0; }
+  settle_epoch=$(fm_idle_compact_marker_field "$marker" settle_epoch)
+  case "$settle_epoch" in
+    ''|*[!0-9]*) rm -f "$marker"; return 0 ;;
+  esac
+  settle_secs=${FM_IDLE_COMPACT_SETTLE_SECS:-${FM_IDLE_COMPACT_INTERVAL:-300}}
+  age=$(( $(date +%s) - settle_epoch ))
+  [ "$age" -ge "$settle_secs" ] || return 0
+
+  fm_idle_compact_marker_write "$marker" phase=done \
+    "status_sig=$(fm_idle_compact_status_sig "$state" "$task")" \
+    "pane_sig=$(fm_idle_compact_pane_sig "$FM_IDLE_COMPACT_BACKEND" "$FM_IDLE_COMPACT_TARGET" "$FM_IDLE_COMPACT_LABEL")"
   return 0
 }
 
@@ -325,7 +361,11 @@ fm_idle_compact_process_task() {  # <state> <task> <threshold-minutes>
     phase=$(fm_idle_compact_marker_field "$marker" phase)
     case "$phase" in
       save-sent)
-        fm_idle_compact_advance_save_sent "$state" "$task" "$marker"
+        fm_idle_compact_advance_save_sent "$state" "$task" "$marker" "$threshold_min"
+        return 0
+        ;;
+      settling)
+        fm_idle_compact_advance_settling "$state" "$task" "$marker"
         return 0
         ;;
       done)
