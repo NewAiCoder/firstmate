@@ -207,7 +207,8 @@ Cursor is deliberately outside this cursor-anchored empty-composer matrix becaus
 
 ## Idle-worker pre-compaction
 
-The idle-compact eligibility gate (`bin/fm-idle-compact.sh`, `fm_idle_compact_safe_to_send`) composes two vendor-facing reads - `bin/fm-busy-lib.sh`'s `fm_busy_classify` and `bin/fm-backend.sh`'s `fm_backend_composer_state` - and must never send into a real Claude Code pane unless both read an exact `idle` + `empty` verdict. This was verified live on 2026-08-13 from the task worktree, on tmux 3.6, Linux (WSL2), on an isolated private socket, with no prompt ever submitted to Claude (`fm_idle_compact_send` stubbed to record instead of really sending).
+The idle-compact eligibility gate (`bin/fm-idle-compact.sh`, `fm_idle_compact_safe_to_send`) composes two vendor-facing reads - `bin/fm-busy-lib.sh`'s `fm_busy_classify` and `bin/fm-backend.sh`'s `fm_backend_composer_state` - and must never send into a real Claude Code pane unless both read an exact `idle` + `empty` verdict.
+This was verified live on 2026-08-13 from the task worktree, on tmux 3.6, Linux (WSL2), on an isolated private socket, with no prompt ever submitted to Claude (`fm_idle_compact_send` stubbed to record instead of really sending).
 
 ```sh
 FM_IDLE_COMPACT_LIVE=1 tests/fm-idle-compact-live-e2e.test.sh
@@ -223,9 +224,11 @@ ok - claude (2.1.228 (Claude Code)): a real idle+empty composer after the save t
 all fm-idle-compact-live-e2e checks passed
 ```
 
-A freshly armed busy-state record (the real spawn shape: `arm` seeds `busy fm-spawn`) blocked the send even with a genuinely empty composer; applying a real `idle` event (the Stop-hook shape) unblocked it; a real pending (unsubmitted) composer then blocked the send again independent of the still-idle busy-state record; clearing it let the same episode complete with a real `/compact` send. This is the refresh command after any Claude Code upgrade; rerun it and update the version above rather than trusting this table across releases.
+A freshly armed busy-state record (the real spawn shape: `arm` seeds `busy fm-spawn`) blocked the send even with a genuinely empty composer; applying a real `idle` event (the Stop-hook shape) unblocked it; a real pending (unsubmitted) composer then blocked the send again independent of the still-idle busy-state record; clearing it let the same episode complete with a real `/compact` send.
+This is the refresh command after any Claude Code upgrade; rerun it and update the version above rather than trusting this table across releases.
 
-Only Claude is verified here - every other verified harness (`codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, `muse`) is reviewed and not applicable: none has a verified compaction slash-command surface today, so idle-compact's harness check (`harness=claude` in `state/<id>.meta`) skips them by construction rather than guessing at an unverified command. See `docs/configuration.md` "Idle-worker pre-compaction" and "Harness compatibility".
+Only Claude is verified here - every other verified harness (`codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, `muse`) is reviewed and not applicable: none has a verified compaction slash-command surface today, so idle-compact's harness check (`harness=claude` in `state/<id>.meta`) skips them by construction rather than guessing at an unverified command.
+See `docs/configuration.md` "Idle-worker pre-compaction" and "Harness compatibility".
 
 ## Herdr
 
