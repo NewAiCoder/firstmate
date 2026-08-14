@@ -691,7 +691,7 @@ test_tick_sweep_due_gating() {
 
 test_tick_held_sweep_lock_defers_whole_sweep() {
   (
-    local dir log lock holder_pid i
+    local dir log lock holder_pid
     dir=$(new_dir tick-lockheld)
     write_task_meta "$dir/state" t1
     touch_status "$dir/state" t1 3600
@@ -707,7 +707,7 @@ test_tick_held_sweep_lock_defers_whole_sweep() {
     lock="$dir/state/.idle-compact.lock"
     ( fm_lock_try_acquire "$lock" && sleep 30 ) &
     holder_pid=$!
-    for i in $(seq 1 50); do
+    for _ in $(seq 1 50); do
       [ -L "$lock" ] && break
       sleep 0.1
     done
