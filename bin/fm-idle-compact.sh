@@ -409,10 +409,27 @@ fm_idle_compact_sweep_due() {  # <state>
 # cadence. Always returns 0: idle-compact is opt-in housekeeping and must
 # never fail a caller's loop.
 fm_idle_compact_tick() {  # <state> [config-dir]
-  local state=$1 config=${2:-$CONFIG} minutes meta task
+  local state=$1 config=${2:-$CONFIG} minutes meta task lock
 
   minutes=$(fm_idle_compact_threshold_minutes "$config") || return 0
   fm_idle_compact_sweep_due "$state" || return 0
+
+  # The watcher's main loop and the away-mode daemon's housekeeping tick both
+  # call this against the same state dir, and the due-check above is
+  # check-then-touch: without mutual exclusion two concurrent callers can both
+  # pass it in the same window, both pass the live safety gate, and interleave
+  # keystrokes into the same crewmate pane. fm_lock_try_acquire is the
+  # existing WATCH_LOCK idiom (bin/fm-wake-lib.sh: pid-recorded, stale-holder
+  # recovery built in); a held lock means the other supervisor is already
+  # sweeping, so skipping is silent routine. The due-check re-runs under the
+  # lock because the loser of the race may acquire only after the winner
+  # released, with the marker already freshly touched.
+  lock="$state/.idle-compact.lock"
+  fm_lock_try_acquire "$lock" || return 0
+  if ! fm_idle_compact_sweep_due "$state"; then
+    fm_lock_release "$lock"
+    return 0
+  fi
   touch "$state/.idle-compact-last-sweep" 2>/dev/null || true
 
   for meta in "$state"/*.meta; do
@@ -420,6 +437,7 @@ fm_idle_compact_tick() {  # <state> [config-dir]
     task=$(basename "$meta"); task=${task%.meta}
     fm_idle_compact_process_task "$state" "$task" "$minutes"
   done
+  fm_lock_release "$lock"
   return 0
 }
 

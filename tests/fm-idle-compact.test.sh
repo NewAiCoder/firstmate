@@ -689,6 +689,43 @@ test_tick_sweep_due_gating() {
   ) || exit 1
 }
 
+test_tick_held_sweep_lock_defers_whole_sweep() {
+  (
+    local dir log lock holder_pid i
+    dir=$(new_dir tick-lockheld)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: parked")
+    printf '30\n' > "$dir/config/idle-compact"
+
+    # A concurrent supervisor (a DIFFERENT live pid - the same pid would take
+    # fm_lock_try_acquire's self-held reclaim path) holds the sweep lock for
+    # the duration of the tick under test.
+    lock="$dir/state/.idle-compact.lock"
+    ( fm_lock_try_acquire "$lock" && sleep 30 ) &
+    holder_pid=$!
+    for i in $(seq 1 50); do
+      [ -L "$lock" ] && break
+      sleep 0.1
+    done
+    [ -L "$lock" ] || fail "fixture: background holder never acquired the sweep lock"
+
+    fm_idle_compact_tick "$dir/state" "$dir/config"
+
+    kill "$holder_pid" 2>/dev/null || true
+    wait "$holder_pid" 2>/dev/null || true
+    [ ! -s "$log" ] || fail "a held sweep lock must defer every send to the lock holder's sweep"
+    [ ! -e "$dir/state/.idle-compact-last-sweep" ] \
+      || fail "a locked-out tick must not touch the last-sweep marker (the holder's sweep owns it)"
+    [ ! -e "$(fm_idle_compact_marker_path "$dir/state" t1)" ] \
+      || fail "a locked-out tick must not advance any task's marker state machine"
+    pass "fm_idle_compact_tick: a sweep lock held by a live concurrent supervisor defers the whole sweep"
+  ) || exit 1
+}
+
 # --- run ---------------------------------------------------------------------
 
 test_config_absent_is_disabled
@@ -728,5 +765,6 @@ test_done_pane_change_clears_marker
 test_tick_absent_config_is_grep_provably_inert
 test_tick_present_config_sweeps_eligible_task
 test_tick_sweep_due_gating
+test_tick_held_sweep_lock_defers_whole_sweep
 
 echo "all fm-idle-compact tests passed"
