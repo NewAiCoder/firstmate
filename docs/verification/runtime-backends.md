@@ -214,9 +214,20 @@ The live guard exercises this against a real installed Claude Code session on an
 FM_IDLE_COMPACT_LIVE=1 tests/fm-idle-compact-live-e2e.test.sh
 ```
 
-Verification status: PENDING RE-RUN.
-An earlier recorded transcript predated review-round changes to the state machine (the settling phase, the pre-`/compact` eligibility re-check, the completed save message, and the sweep lock) and was removed rather than left as stale evidence.
-Re-run the guard above against the shipped code and replace this status block with the real dated observed output, in the same format as the composer-classification-matrix entry, before trusting this section.
+Verified on 2026-08-13 against the shipped code (including the review-round settling phase, the pre-`/compact` eligibility re-check, the completed save message, and the sweep lock) on tmux 3.6, Linux x86_64 (WSL2), on an isolated private socket, with no prompt submitted to Claude.
+
+Observed output:
+
+```text
+ok - claude (2.1.228 (Claude Code)): a real busy-state record correctly blocks the send through fm_busy_classify, even with a genuinely empty composer
+ok - claude (2.1.228 (Claude Code)): a real idle busy-state record plus a real empty Claude Code composer together permit the send through fm_idle_compact_safe_to_send
+ok - claude (2.1.228 (Claude Code)): a real pending (unsubmitted) composer correctly blocks the send
+ok - claude (2.1.228 (Claude Code)): a real idle+empty composer after the save turn completes sends /compact and reaches phase=settling
+ok - claude (2.1.228 (Claude Code)): the settle sweep captures the post-render baseline and reaches phase=done without further sends
+# no message was ever actually submitted to the live claude process - fm_idle_compact_send was stubbed throughout, so no model tokens were spent
+all fm-idle-compact-live-e2e checks passed
+```
+
 The same command is the refresh path after any Claude Code upgrade; rerun it and record the new version rather than trusting recorded evidence across releases.
 
 Only Claude is verified here - every other verified harness (`codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, `muse`) is reviewed and not applicable: none has a verified compaction slash-command surface today, so idle-compact's harness check (`harness=claude` in `state/<id>.meta`) skips them by construction rather than guessing at an unverified command.
