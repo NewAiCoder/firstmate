@@ -597,6 +597,49 @@ test_non_induced_turn_end_in_the_same_window_still_wakes() {
   pass "a non-induced turn-end in the same idle-compact episode window still wakes normally"
 }
 
+# The two absorption cases above prove this watcher CONSULTS the idle-compact
+# owner, not that its loop ever runs the sweep that acts. Deleting the sweep
+# call from the loop would leave the opt-in feature silently dead on this
+# supervision path with every other test still green, so pin the loop's own
+# observable: the sweep stamps state/.idle-compact-last-sweep once per due
+# sweep, and only while the feature is configured.
+wait_path() {  # <path> [limit]
+  local path=$1 limit=${2:-60} i=0
+  while [ "$i" -lt "$limit" ]; do
+    [ -e "$path" ] && return 0
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+test_watcher_loop_sweeps_only_once_the_feature_is_configured() {
+  local dir state fakebin out pid beat
+  dir=$(make_case idle-compact-sweep-wired); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  mkdir -p "$dir/config"
+
+  # No config/idle-compact yet: the loop still turns (its liveness beacon is
+  # touched in the same iteration, immediately before the sweep call), and the
+  # sweep must leave nothing behind.
+  watch_bg "$state" "$fakebin" "$out" FM_CONFIG_OVERRIDE="$dir/config"
+  pid=$!
+  beat="$state/.last-watcher-beat"
+  wait_path "$beat" 80 || { reap "$pid"; fail "the watcher loop never completed an iteration: $(cat "$out")"; }
+  [ ! -e "$state/.idle-compact-last-sweep" ] \
+    || { reap "$pid"; fail "the watcher swept with config/idle-compact absent - the feature must ship inert"; }
+
+  # Opt in mid-run: the gate is a per-tick file check, so the very next
+  # iteration sweeps.
+  printf '30\n' > "$dir/config/idle-compact"
+  wait_path "$state/.idle-compact-last-sweep" 80 \
+    || { reap "$pid"; fail "the watcher loop never ran the idle-compact sweep with the feature configured: $(cat "$out")"; }
+  is_live_non_zombie "$pid" || { reap "$pid"; fail "the idle-compact sweep exited the watcher instead of staying silent routine"; }
+  [ ! -s "$out" ] || { reap "$pid"; fail "the idle-compact sweep printed a wake reason: $(cat "$out")"; }
+  reap "$pid"
+  pass "the watcher's own loop runs the idle-compact sweep only once the feature is configured, and never wakes for it"
+}
+
 # --- actionable wakes are surfaced (queue + exit) ---------------------------
 
 test_actionable_signal_surfaced() {
@@ -2032,6 +2075,7 @@ test_secondmate_status_note_surfaced_despite_busy_agent
 test_self_announced_close_does_not_rewake_but_next_note_does
 test_idle_compact_induced_turn_end_absorbed
 test_non_induced_turn_end_in_the_same_window_still_wakes
+test_watcher_loop_sweeps_only_once_the_feature_is_configured
 test_actionable_signal_surfaced
 test_terminal_stale_surfaced
 test_stale_terminal_status_overridden_by_active_run

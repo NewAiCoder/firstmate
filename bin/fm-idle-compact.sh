@@ -61,7 +61,7 @@
 # The two turns an episode induces (the notes save and the /compact) would
 # each otherwise surface as an actionable turn-end wake. fm_idle_compact_absorbs_signal
 # is the narrow, episode-scoped exemption bin/fm-watch.sh's signal triage asks
-# this owner about; see its own comment for the five conditions it requires.
+# this owner about; see its own comment for the conditions it requires.
 #
 # Every message is delivered through bin/fm-send.sh exactly as any other
 # steer, so the type-once-verified-Enter submission and delivery confirmation
