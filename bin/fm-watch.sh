@@ -13,7 +13,12 @@
 # on every wake. Printed reason lines:
 #   signal: <file>...      status/turn-end signals, surfaced when a listed status
 #                          has a captain-relevant verb OR a no-verb signal's crew
-#                          is not provably working, unless afk is active
+#                          is not provably working, unless afk is active. The
+#                          one exception is a turn-end the opt-in idle-compact
+#                          sweep itself induced, which its own owner
+#                          (bin/fm-idle-compact.sh) identifies per episode and
+#                          this watcher then absorbs; the feature's own
+#                          housekeeping must not spend a captain turn
 #   stale: <window>        a provably-working stale is ALWAYS absorbed (with a wedge
 #                          timer) regardless of what the status log says - an active
 #                          run-step or busy pane outranks even a captain-relevant log
@@ -474,6 +479,31 @@ scan_signals() {
     fi
   done
   return 0
+}
+
+# Drop from a pending signal batch exactly the turn-ends the opt-in
+# idle-compact sweep itself induced (its precompact-notes save and its
+# /compact), advancing their .seen-* markers the same way an absorbed benign
+# wake does so they never re-fire. The decision is NOT made here: it belongs to
+# bin/fm-idle-compact.sh, the single owner both this watcher and
+# bin/fm-supervise-daemon.sh share, so the two supervision paths cannot drift
+# on it - and it is episode-scoped and one-shot per induced send, so every
+# other signal, including a second turn-end for the same task in the same
+# window and any status append, passes through untouched. With the feature off
+# no episode marker exists, so nothing is ever dropped.
+absorb_idle_compact_induced() {  # <pending> -> the surviving pending lines
+  local pending=$1 sf sig f
+  while IFS=$(printf '\t') read -r sf sig f; do
+    [ -n "$sf" ] || continue
+    if fm_idle_compact_absorbs_signal "$STATE" "$f" "$sig"; then
+      printf '%s' "$sig" > "$sf"
+      triage_log "absorbed idle-compact induced turn-end: $f"
+      continue
+    fi
+    printf '%s\t%s\t%s\n' "$sf" "$sig" "$f"
+  done <<EOF
+$pending
+EOF
 }
 
 # Deliver a durably queued process-event result to firstmate. Publication is
@@ -965,6 +995,9 @@ while :; do
   if [ -n "$pending" ]; then
     sleep "$SIGNAL_GRACE"
     pending=$(printf '%s\n%s' "$pending" "$(scan_signals)")
+    pending=$(absorb_idle_compact_induced "$pending")
+  fi
+  if [ -n "$pending" ]; then
     files=""
     while IFS=$(printf '\t') read -r sf sig f; do
       [ -n "$sf" ] || continue

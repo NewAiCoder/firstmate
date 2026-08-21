@@ -27,9 +27,9 @@
 #   - bin/fm-crew-state.sh's reconciled current state is parked, done,
 #     blocked, or paused - never working (an active no-mistakes run step or a
 #     busy pane, even behind a quiet-looking pane) or unknown;
-#   - state/<id>.status's mtime age is at least the configured threshold,
-#     the same idle-duration basis the watcher's declared-pause re-surface
-#     cadence already uses (bin/fm-watch.sh's handle_paused_stale);
+#   - last activity - the newest of the task's meta, status, turn-ended, and
+#     observed-pane-activity stamps, through bin/fm-wake-lib.sh's shared
+#     fm_last_activity_age - is at least the configured threshold old;
 #   - a live safety gate right before typing anything: an exact idle verdict
 #     from bin/fm-busy-lib.sh's fm_busy_classify and an exact `empty` verdict
 #     from bin/fm-backend.sh's fm_backend_composer_state - the identical
@@ -53,9 +53,15 @@
 #      phase=done with the status-line and pane-tail signatures - captured
 #      after the render so the compaction's own output is baked into the
 #      baseline and never reads as new worker activity.
-#   4. phase=done: a changed status line or pane-tail signature (a new status
-#      append or new pane activity) clears the marker so the next idle
-#      episode is evaluated fresh.
+#   4. phase=done: a changed status or pane-tail signature (a new status
+#      append or new pane activity) ends the episode, replacing the marker
+#      with a phase=reset activity stamp so the next episode is evaluated
+#      fresh - and only after a full new idle window measured from that stamp.
+#
+# The two turns an episode induces (the notes save and the /compact) would
+# each otherwise surface as an actionable turn-end wake. fm_idle_compact_absorbs_signal
+# is the narrow, episode-scoped exemption bin/fm-watch.sh's signal triage asks
+# this owner about; see its own comment for the five conditions it requires.
 #
 # Every message is delivered through bin/fm-send.sh exactly as any other
 # steer, so the type-once-verified-Enter submission and delivery confirmation
@@ -172,18 +178,24 @@ fm_idle_compact_pane_sig() {  # <backend> <target> <label>
   fm_backend_capture "$1" "$2" 40 "$3" 2>/dev/null | fm_idle_compact_hash
 }
 
+# The size:mtime signature bin/fm-wake-lib.sh owns for exactly this question -
+# "did this file gain new bytes since I last looked" - and that the watcher's
+# own .seen-* dedup already uses for .status and .turn-ended. A line's TEXT is
+# not a usable append signature: a second, textually identical status append
+# (a repeated "blocked: waiting on the gate") is a genuinely new append that
+# must reset the episode, and comparing text would silently miss it.
+# Empty when the file does not exist, which compares equal to an equally
+# absent recorded baseline.
 fm_idle_compact_status_sig() {  # <state> <task>
-  last_status_line "$1/$2.status"
+  fm_wake_signal_sig "$1/$2.status" 2>/dev/null || true
 }
 
 # turn-ended is touch(1)ed by the harness's turn-end hook on every completed
-# turn (AGENTS.md's state/<id>.turn-ended); its mtime alone is a sufficient
-# signature since a fresh touch always advances it. "absent" when the task
-# has not completed a turn since it was spawned.
+# turn (AGENTS.md's state/<id>.turn-ended). Same signature owner and same
+# empty-means-absent contract as the status signature above, so a recorded
+# baseline can be compared against the watcher's .seen-* marker byte for byte.
 fm_idle_compact_turnended_sig() {  # <state> <task>
-  local m
-  m=$(fm_path_mtime "$1/$2.turn-ended") || true
-  printf '%s' "${m:-absent}"
+  fm_wake_signal_sig "$1/$2.turn-ended" 2>/dev/null || true
 }
 
 # --- marker (state/.idle-compact-<task>) ------------------------------------
@@ -211,7 +223,58 @@ fm_idle_compact_marker_write() {  # <marker-file> <key=value>...
   } > "$tmp" && mv -f "$tmp" "$f"
 }
 
+# Set one field on an EXISTING marker, leaving every other field byte-identical
+# and the phase untouched. Same atomic temp-then-rename discipline as the full
+# write above.
+fm_idle_compact_marker_set() {  # <marker-file> <key> <value>
+  local f=$1 key=$2 value=$3 tmp
+  [ -f "$f" ] || return 1
+  tmp="$f.tmp.$$"
+  {
+    grep -v "^$key=" "$f" 2>/dev/null || true
+    printf '%s=%s\n' "$key" "$value"
+  } > "$tmp" && mv -f "$tmp" "$f"
+}
+
 # --- eligibility and the live safety gate -----------------------------------
+
+# Seconds since this task's last activity of ANY kind - the idle-duration
+# basis the threshold is measured against. bin/fm-wake-lib.sh's
+# fm_last_activity_age is the one owner of the newest-of-mtimes rule, shared
+# with bin/fm-inactive-reconcile.sh's own inactivity scan, so the two cannot
+# answer "how long has this crew been quiet" differently.
+#
+# state/<id>.status alone is NOT that basis: a status line is a wake event
+# written on wake-worthy transitions, not on every turn (AGENTS.md's sparse
+# status-reporting contract), so a crewmate steered back to work, doing it,
+# and ending its turn can leave a 3-hour-old status file untouched. Measuring
+# from that file alone would arm a fresh episode seconds after real activity -
+# compacting a crewmate whose cache is at its warmest, the exact opposite of
+# this feature's purpose.
+#
+# Two adjustments to the plain newest-of rule:
+#   - an in-flight episode's turn-ends are this feature's OWN induced turns
+#     (the notes save and the /compact), so turn-ended is excluded while
+#     phase is save-sent or settling - otherwise the eligibility re-check
+#     before /compact would read the save turn it is explicitly waiting for as
+#     fresh worker activity and never compact at all. Foreign activity during
+#     that window is still caught by the reconciled crew state and the live
+#     safety gate, which both run on every send;
+#   - a phase=reset stamp is included. It is written the moment a finished
+#     episode's reset condition is observed and carries the only durable
+#     record of PANE activity, which leaves no mtime of its own.
+fm_idle_compact_activity_age() {  # <state> <task>
+  local state=$1 task=$2 marker phase
+  marker=$(fm_idle_compact_marker_path "$state" "$task")
+  phase=$(fm_idle_compact_marker_field "$marker" phase) || phase=
+  set -- "$state/$task.meta" "$state/$task.status"
+  case "$phase" in
+    save-sent|settling) ;;
+    reset) set -- "$@" "$state/$task.turn-ended" "$marker" ;;
+    *) set -- "$@" "$state/$task.turn-ended" ;;
+  esac
+  fm_last_activity_age "$(date +%s)" "$@"
+}
 
 fm_idle_compact_eligible() {  # <state> <task> <threshold-minutes>
   local state=$1 task=$2 threshold_min=$3 statusf age crewline crewstate
@@ -222,7 +285,7 @@ fm_idle_compact_eligible() {  # <state> <task> <threshold-minutes>
 
   statusf="$state/$task.status"
   [ -f "$statusf" ] || return 1
-  age=$(fm_path_age "$statusf")
+  age=$(fm_idle_compact_activity_age "$state" "$task")
   [ "$age" -ge $(( threshold_min * 60 )) ] || return 1
 
   # Explicit override passthrough, not ambient-environment reliance: FM_HOME
@@ -279,6 +342,80 @@ fm_idle_compact_send() {  # <state> <task> <message>
     "$SCRIPT_DIR/fm-send.sh" "$2" "$3" >/dev/null 2>&1
 }
 
+# --- induced-turn absorption -------------------------------------------------
+
+# Each episode makes the crewmate take two turns it never asked for: the
+# precompact-notes save and the /compact itself. Every completed turn touches
+# state/<id>.turn-ended, which bin/fm-watch.sh's signal scan surfaces as an
+# actionable no-verb wake whenever the crew is not provably working - and a
+# parked crew never is. Left alone, opting into this quota-saving feature would
+# spend two extra firstmate wake-handling turns per crewmate per episode on
+# housekeeping the captain never requested, which contradicts the "a deferred
+# or failed compact is silent routine, never an escalation" contract.
+#
+# So the wake triage asks this owner - the same single owner both supervision
+# paths already share, so bin/fm-watch.sh and bin/fm-supervise-daemon.sh cannot
+# drift - whether one specific pending turn-ended signal is exactly the turn
+# THIS feature induced. The exemption is deliberately as narrow as it can be:
+#   - only state/<id>.turn-ended, never a status file (a status append is the
+#     crew's own captain-facing report and always wakes);
+#   - only while that task's own marker is in an in-flight phase (save-sent or
+#     settling), so it expires with the episode - a phase=done, phase=reset, or
+#     absent marker absorbs nothing;
+#   - only within FM_IDLE_COMPACT_SAVE_TIMEOUT_SECS of the send that induced
+#     it, the same bound the state machine abandons a never-completing save
+#     turn on;
+#   - at most ONE turn per send. The absorbed signature is recorded, so
+#     re-seeing that exact signature (the watcher scans twice across its signal
+#     grace window) is idempotent, while any LATER turn-end - real crew work
+#     landing in the same window - carries a different signature and wakes
+#     normally;
+#   - only when the watcher's .seen-* marker still matches the signature
+#     recorded when the message was sent, i.e. every earlier turn-end was
+#     already surfaced or deliberately absorbed. This is the provenance gate
+#     bin/fm-wake-lib.sh's fm_wake_status_append_self_announced applies to the
+#     same marker format, and it fails toward waking: an unannounced foreign
+#     turn-end pending on the file means this signal is not provably ours.
+# Every other condition - a missing marker, an unreadable signature, a
+# malformed epoch, clock skew - returns 1, and the signal wakes the captain
+# exactly as it does today.
+fm_idle_compact_absorbs_signal() {  # <state> <signal-file> [signature]
+  local state=$1 file=$2 sig=${3:-} task marker phase epoch baseline absorbed now
+
+  case "$file" in *.turn-ended) ;; *) return 1 ;; esac
+  task=$(basename "$file"); task=${task%.turn-ended}
+  [ -n "$task" ] || return 1
+
+  marker=$(fm_idle_compact_marker_path "$state" "$task")
+  [ -f "$marker" ] || return 1
+  phase=$(fm_idle_compact_marker_field "$marker" phase)
+  case "$phase" in
+    save-sent) epoch=$(fm_idle_compact_marker_field "$marker" sent_epoch) ;;
+    settling)  epoch=$(fm_idle_compact_marker_field "$marker" settle_epoch) ;;
+    *) return 1 ;;
+  esac
+  case "$epoch" in ''|*[!0-9]*) return 1 ;; esac
+  now=$(date +%s)
+  [ "$now" -ge "$epoch" ] || return 1
+  [ $(( now - epoch )) -lt "${FM_IDLE_COMPACT_SAVE_TIMEOUT_SECS:-900}" ] || return 1
+
+  [ -n "$sig" ] || sig=$(fm_wake_signal_sig "$file" 2>/dev/null || true)
+  [ -n "$sig" ] || return 1
+
+  absorbed=$(fm_idle_compact_marker_field "$marker" absorbed_turnended)
+  if [ -n "$absorbed" ]; then
+    [ "$sig" = "$absorbed" ] || return 1
+    return 0
+  fi
+
+  baseline=$(fm_idle_compact_marker_field "$marker" baseline_turnended)
+  [ "$sig" != "$baseline" ] || return 1
+  [ "$(cat "$(fm_wake_signal_seen_path "$state" "$file")" 2>/dev/null || true)" = "$baseline" ] || return 1
+
+  fm_idle_compact_marker_set "$marker" absorbed_turnended "$sig" || return 1
+  return 0
+}
+
 # --- per-task state machine --------------------------------------------------
 
 # Phase 2: waits for the turn-ended signature to advance past the recorded
@@ -317,7 +454,8 @@ fm_idle_compact_advance_save_sent() {  # <state> <task> <marker> <threshold-minu
 
   if fm_idle_compact_send "$state" "$task" "$(fm_idle_compact_compact_message "$task")"; then
     fm_idle_compact_marker_write "$marker" phase=settling \
-      "settle_epoch=$(date +%s)"
+      "settle_epoch=$(date +%s)" \
+      "baseline_turnended=$cur_turnended"
   fi
   return 0
 }
@@ -377,7 +515,21 @@ fm_idle_compact_process_task() {  # <state> <task> <threshold-minutes>
         if [ "$cur_status" = "$status_sig" ] && [ "$cur_pane_sig" = "$pane_sig" ]; then
           return 0
         fi
-        rm -f "$marker"
+        # The episode is over: a new status append or new pane activity ends
+        # it. Replacing the marker with a phase=reset stamp rather than
+        # deleting it keeps the ONE durable record of when that activity was
+        # observed, which is what makes the next episode wait out a fresh idle
+        # window instead of re-arming on the same sweep. Pane activity leaves
+        # no mtime anywhere else, so without this stamp a crewmate whose pane
+        # just changed reads as idle-since-its-last-status and gets compacted
+        # while its cache is at its warmest.
+        fm_idle_compact_marker_write "$marker" phase=reset
+        return 0
+        ;;
+      reset)
+        # Not an episode: an activity stamp left by the reset above, consumed
+        # by fm_idle_compact_activity_age below. Left byte-identical (and so
+        # mtime-identical) until a fresh episode overwrites it.
         ;;
       *)
         rm -f "$marker"

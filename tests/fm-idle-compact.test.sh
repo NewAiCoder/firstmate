@@ -49,12 +49,27 @@ write_task_meta() {  # <state> <task> [harness] [kind] [window]
     "kind=$kind"
 }
 
+# Appends <line> to the task's status log and backdates the file <seconds-ago>.
+# The spawn record is backdated with it: fm-spawn.sh writes state/<id>.meta once,
+# at spawn, so in production a crew's own status appends always come LATER, and
+# the idle-duration basis (newest of meta/status/turn-ended) would otherwise read
+# a fixture's just-written meta as activity a real fleet never has.
 touch_status() {  # <state> <task> <seconds-ago> [line]
   local state=$1 task=$2 ago=$3 line=${4:-done: fixture} f now
   f="$state/$task.status"
   printf '%s\n' "$line" > "$f"
   now=$(date +%s)
   touch -d "@$((now - ago))" "$f"
+  [ -e "$state/$task.meta" ] && touch -d "@$((now - ago))" "$state/$task.meta"
+  return 0
+}
+
+# Backdates an existing file by <seconds-ago>, for aging a marker/turn-ended
+# fixture the same way touch_status ages a status log.
+backdate() {  # <file> <seconds-ago>
+  local now
+  now=$(date +%s)
+  touch -d "@$(( now - $2 ))" "$1"
 }
 
 # write_crew_state_stub <dir> <line> -> echoes an executable path that always
@@ -377,7 +392,7 @@ test_savesent_no_turnended_yet_stays_savesent() {
     stub_always_safe
     stub_recording_send "$log"
     marker=$(fm_idle_compact_marker_path "$dir/state" t1)
-    fm_idle_compact_marker_write "$marker" phase=save-sent "sent_epoch=$(date +%s)" "baseline_turnended=absent"
+    fm_idle_compact_marker_write "$marker" phase=save-sent "sent_epoch=$(date +%s)" "baseline_turnended="
 
     fm_idle_compact_process_task "$dir/state" t1 30
     [ "$(fm_idle_compact_marker_field "$marker" phase)" = save-sent ] \
@@ -398,7 +413,7 @@ test_savesent_turnended_advanced_sends_compact_and_marks_settling() {
     stub_always_safe
     stub_recording_send "$log"
     marker=$(fm_idle_compact_marker_path "$dir/state" t1)
-    fm_idle_compact_marker_write "$marker" phase=save-sent "sent_epoch=$(date +%s)" "baseline_turnended=absent"
+    fm_idle_compact_marker_write "$marker" phase=save-sent "sent_epoch=$(date +%s)" "baseline_turnended="
     touch "$dir/state/t1.turn-ended"
 
     fm_idle_compact_process_task "$dir/state" t1 30
@@ -431,7 +446,7 @@ test_savesent_turnended_advanced_but_unsafe_defers() {
     fm_backend_composer_state() { printf 'empty'; }
     stub_recording_send "$log"
     marker=$(fm_idle_compact_marker_path "$dir/state" t1)
-    fm_idle_compact_marker_write "$marker" phase=save-sent "sent_epoch=$(date +%s)" "baseline_turnended=absent"
+    fm_idle_compact_marker_write "$marker" phase=save-sent "sent_epoch=$(date +%s)" "baseline_turnended="
     touch "$dir/state/t1.turn-ended"
 
     fm_idle_compact_process_task "$dir/state" t1 30
@@ -453,7 +468,7 @@ test_savesent_turnended_advanced_but_crew_working_defers() {
     stub_always_safe
     stub_recording_send "$log"
     marker=$(fm_idle_compact_marker_path "$dir/state" t1)
-    fm_idle_compact_marker_write "$marker" phase=save-sent "sent_epoch=$(date +%s)" "baseline_turnended=absent"
+    fm_idle_compact_marker_write "$marker" phase=save-sent "sent_epoch=$(date +%s)" "baseline_turnended="
     touch "$dir/state/t1.turn-ended"
 
     fm_idle_compact_process_task "$dir/state" t1 30
@@ -535,7 +550,7 @@ test_savesent_timeout_abandons_without_compact() {
     stub_recording_send "$log"
     marker=$(fm_idle_compact_marker_path "$dir/state" t1)
     # sent long ago, save turn never completed (no turn-ended touch)
-    fm_idle_compact_marker_write "$marker" phase=save-sent "sent_epoch=1" "baseline_turnended=absent"
+    fm_idle_compact_marker_write "$marker" phase=save-sent "sent_epoch=1" "baseline_turnended="
 
     FM_IDLE_COMPACT_SAVE_TIMEOUT_SECS=1 fm_idle_compact_process_task "$dir/state" t1 30
     [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
@@ -587,14 +602,50 @@ test_done_status_change_clears_marker_and_restarts_episode() {
     marker=$(fm_idle_compact_marker_path "$dir/state" t1)
     fm_idle_compact_marker_write "$marker" phase=done "status_sig=$status_sig" "pane_sig=$pane_sig"
 
-    # New status append, well past the threshold again (a fresh long wait).
-    touch_status "$dir/state" t1 3600 "blocked: new episode"
+    # A new status append ends the episode. The append is fresh (a real crew
+    # writes one now, not an hour ago), so the sweep that observes it must
+    # stamp the reset and start no new episode yet.
+    printf 'blocked: new episode\n' >> "$dir/state/t1.status"
 
     fm_idle_compact_process_task "$dir/state" t1 30
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = reset ] \
+      || fail "a new status append must end the episode and leave a phase=reset activity stamp"
+    [ ! -s "$log" ] || fail "a crewmate that just appended a status must not be sent anything on that same sweep"
+
+    # One full idle window later - with nothing further from the crew - the
+    # stamp has aged out and the next episode starts.
+    backdate "$marker" 3600
+    backdate "$dir/state/t1.status" 3600
+    fm_idle_compact_process_task "$dir/state" t1 30
     [ "$(fm_idle_compact_marker_field "$marker" phase)" = save-sent ] \
-      || fail "a new status append must clear the old marker and start a fresh episode"
+      || fail "once the reset stamp has aged past the threshold, a fresh episode must start"
     [ "$(wc -l < "$log")" = 1 ] || fail "a fresh episode must send exactly one new save message"
-    pass "fm_idle_compact_process_task: a new status append clears phase=done and starts a fresh idle episode"
+    pass "fm_idle_compact_process_task: a new status append ends the episode and the next one waits out a full fresh idle window"
+  ) || exit 1
+}
+
+test_reset_stamp_holds_off_a_new_episode_for_a_full_window() {
+  (
+    local dir log marker
+    dir=$(new_dir sm-reset-holdoff)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 7200
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: parked")
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    # Pane activity was observed a minute ago: the status log is ancient, but
+    # this crewmate is not idle - its cache is warm and compacting it now is
+    # exactly the waste this feature exists to avoid.
+    fm_idle_compact_marker_write "$marker" phase=reset
+    backdate "$marker" 60
+
+    fm_idle_compact_process_task "$dir/state" t1 30
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = reset ] \
+      || fail "a fresh reset stamp must keep holding off the next episode"
+    [ ! -s "$log" ] || fail "an ancient status log must not make a just-active crewmate eligible"
+    pass "fm_idle_compact_process_task: a fresh pane-activity reset stamp holds off the next episode for a full idle window"
   ) || exit 1
 }
 
@@ -619,8 +670,198 @@ test_done_pane_change_clears_marker() {
     # "not eligible right now" (crew state is 'working'), which still must
     # clear the stale marker rather than silently keep it.
     fm_idle_compact_process_task "$dir/state" t1 30
-    [ ! -e "$marker" ] || fail "a changed pane signature must clear the phase=done marker even when the crew is not currently eligible"
-    pass "fm_idle_compact_process_task: a changed pane signature alone clears phase=done, independent of status"
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = reset ] \
+      || fail "a changed pane signature must end the phase=done episode even when the crew is not currently eligible"
+    pass "fm_idle_compact_process_task: a changed pane signature alone ends phase=done, independent of status"
+  ) || exit 1
+}
+
+# --- the idle-duration basis (fm_idle_compact_activity_age) -----------------
+# Requirement 2's threshold is measured from last activity, not from the status
+# log alone: AGENTS.md's status-append protocol makes a status line a WAKE
+# EVENT, written on wake-worthy transitions, so a crewmate steered back to
+# work, doing it, and ending its turn leaves an hours-old status file untouched.
+
+test_recent_turn_end_blocks_eligibility_despite_ancient_status() {
+  (
+    local dir
+    dir=$(new_dir basis-turnend)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 10800 "needs-decision: which gate"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: parked")
+    : > "$dir/state/t1.turn-ended"
+
+    fm_idle_compact_eligible "$dir/state" t1 30 \
+      && fail "a crewmate that completed a turn seconds ago is not idle, however old its status log is"
+    # ... and once that turn is itself hours old, it is idle again.
+    backdate "$dir/state/t1.turn-ended" 10800
+    fm_idle_compact_eligible "$dir/state" t1 30 \
+      || fail "a crewmate whose newest activity of any kind is hours old must be eligible"
+    pass "fm_idle_compact_eligible: the idle threshold is measured from the newest activity (turn-ended), not the status log alone"
+  ) || exit 1
+}
+
+test_recent_spawn_record_blocks_eligibility() {
+  (
+    local dir
+    dir=$(new_dir basis-meta)
+    touch_status "$dir/state" t1 10800
+    write_task_meta "$dir/state" t1
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: parked")
+
+    fm_idle_compact_eligible "$dir/state" t1 30 \
+      && fail "a just-recorded spawn (a fresh incarnation behind an inherited status log) must not read as idle"
+    pass "fm_idle_compact_eligible: a fresh spawn record counts as activity in the idle-duration basis"
+  ) || exit 1
+}
+
+test_identical_repeated_status_append_ends_the_episode() {
+  (
+    local dir log marker status_sig pane_sig
+    dir=$(new_dir sm-identical-append)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600 "blocked: waiting on the gate"
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: parked")
+    fm_idle_compact_task_context "$dir/state" t1
+    status_sig=$(fm_idle_compact_status_sig "$dir/state" t1)
+    # shellcheck disable=SC2031  # read within the same subshell that just set it above
+    pane_sig=$(fm_idle_compact_pane_sig "$FM_IDLE_COMPACT_BACKEND" "$FM_IDLE_COMPACT_TARGET" "$FM_IDLE_COMPACT_LABEL")
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    fm_idle_compact_marker_write "$marker" phase=done "status_sig=$status_sig" "pane_sig=$pane_sig"
+
+    # A SECOND, textually identical append: a genuinely new status line, and so
+    # a genuine reset, even though the last line's text did not change.
+    printf 'blocked: waiting on the gate\n' >> "$dir/state/t1.status"
+
+    fm_idle_compact_process_task "$dir/state" t1 30
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = reset ] \
+      || fail "a repeated, textually identical status append is still a new append and must end the episode"
+    pass "fm_idle_compact_process_task: a repeated, textually identical status append still ends the episode"
+  ) || exit 1
+}
+
+# --- induced-turn absorption (fm_idle_compact_absorbs_signal) --------------
+# The episode-scoped, one-shot-per-send exemption bin/fm-watch.sh's signal
+# triage asks this owner about. The watcher-side behavior (a wake really is
+# suppressed, and a non-induced turn-end in the same window really does still
+# wake) is proven end to end against a live watcher in
+# tests/fm-watch-triage.test.sh; these cover the predicate's own arms.
+
+# Marks <file>'s .seen-* suppressor as holding <sig>, i.e. "every byte in this
+# file was already surfaced or deliberately absorbed" - the provenance state
+# the absorption requires, through the production signature owner.
+prime_seen() {  # <state> <file> <sig>
+  printf '%s' "$3" > "$(fm_wake_signal_seen_path "$1" "$2")"
+}
+
+# Sets <file>'s mtime to an exact epoch, so a fixture can order two distinct
+# turn-ends without sleeping through the signature's one-second resolution.
+set_mtime_epoch() {  # <file> <epoch>
+  touch -d "@$2" "$1"
+}
+
+# An in-flight save-sent episode whose induced save turn has just completed.
+# Echoes the marker path.
+arm_induced_turn() {  # <state> <task> <turn-ended-epoch>
+  local state=$1 task=$2 epoch=$3 marker
+  marker=$(fm_idle_compact_marker_path "$state" "$task")
+  fm_idle_compact_marker_write "$marker" phase=save-sent \
+    "sent_epoch=$(date +%s)" "baseline_turnended="
+  prime_seen "$state" "$state/$task.turn-ended" ""
+  : > "$state/$task.turn-ended"
+  set_mtime_epoch "$state/$task.turn-ended" "$epoch"
+  printf '%s' "$marker"
+}
+
+test_absorbs_the_induced_turn_exactly_once() {
+  (
+    local dir state marker now
+    dir=$(new_dir absorb-once); state="$dir/state"
+    write_task_meta "$state" t1
+    now=$(date +%s)
+    marker=$(arm_induced_turn "$state" t1 "$((now - 5))")
+
+    fm_idle_compact_absorbs_signal "$state" "$state/t1.turn-ended" \
+      || fail "the turn-end induced by this episode's own save message must be absorbed"
+    [ -n "$(fm_idle_compact_marker_field "$marker" absorbed_turnended)" ] \
+      || fail "the absorbed turn's signature must be recorded on the episode marker"
+
+    # The watcher scans twice across its signal grace window: re-seeing the
+    # SAME signature is the same turn, not a second one.
+    fm_idle_compact_absorbs_signal "$state" "$state/t1.turn-ended" \
+      || fail "re-seeing the same absorbed signature must stay absorbed (idempotent)"
+
+    # A LATER turn-end in the same episode window is real crew work and must
+    # wake the captain normally - this fence is the safety case for the whole
+    # exemption.
+    set_mtime_epoch "$state/t1.turn-ended" "$now"
+    fm_idle_compact_absorbs_signal "$state" "$state/t1.turn-ended" \
+      && fail "a SECOND turn-end in the same episode window is not induced and must still wake"
+    pass "fm_idle_compact_absorbs_signal: exactly one turn per induced send is absorbed; a later turn-end still wakes"
+  ) || exit 1
+}
+
+test_never_absorbs_a_status_signal() {
+  (
+    local dir state now
+    dir=$(new_dir absorb-status); state="$dir/state"
+    write_task_meta "$state" t1
+    now=$(date +%s)
+    arm_induced_turn "$state" t1 "$((now - 5))" >/dev/null
+    printf 'blocked: gate is red\n' > "$state/t1.status"
+
+    fm_idle_compact_absorbs_signal "$state" "$state/t1.status" \
+      && fail "a status append is the crew's own captain-facing report and must never be absorbed"
+    pass "fm_idle_compact_absorbs_signal: a status append is never absorbed, even mid-episode"
+  ) || exit 1
+}
+
+test_absorbs_nothing_outside_an_in_flight_episode() {
+  (
+    local dir state marker now phase
+    dir=$(new_dir absorb-expired); state="$dir/state"
+    write_task_meta "$state" t1
+    now=$(date +%s)
+    marker=$(arm_induced_turn "$state" t1 "$((now - 5))")
+
+    rm -f "$marker"
+    fm_idle_compact_absorbs_signal "$state" "$state/t1.turn-ended" \
+      && fail "with no episode marker at all, nothing may be absorbed (the feature-off case)"
+
+    for phase in 'done' reset; do
+      fm_idle_compact_marker_write "$marker" "phase=$phase"
+      fm_idle_compact_absorbs_signal "$state" "$state/t1.turn-ended" \
+        && fail "a finished episode (phase=$phase) must absorb nothing - the exemption expires with it"
+    done
+
+    # An in-flight episode whose send is older than the bound the state machine
+    # abandons a never-completing save turn on has expired too.
+    fm_idle_compact_marker_write "$marker" phase=save-sent \
+      "sent_epoch=$((now - 5000))" "baseline_turnended="
+    fm_idle_compact_absorbs_signal "$state" "$state/t1.turn-ended" \
+      && fail "a turn-end past FM_IDLE_COMPACT_SAVE_TIMEOUT_SECS from its send is no longer provably induced"
+    pass "fm_idle_compact_absorbs_signal: the exemption expires with the episode and with its send window"
+  ) || exit 1
+}
+
+test_does_not_absorb_over_an_unannounced_earlier_turn_end() {
+  (
+    local dir state now
+    dir=$(new_dir absorb-unannounced); state="$dir/state"
+    write_task_meta "$state" t1
+    now=$(date +%s)
+    arm_induced_turn "$state" t1 "$((now - 5))" >/dev/null
+    # A turn-end the watcher never surfaced is still pending on this file, so
+    # the recorded baseline no longer matches the .seen-* suppressor: the
+    # signal is not provably ours and must wake.
+    prime_seen "$state" "$state/t1.turn-ended" "0:1"
+
+    fm_idle_compact_absorbs_signal "$state" "$state/t1.turn-ended" \
+      && fail "an unannounced earlier turn-end on the same file must block absorption (fail toward waking)"
+    pass "fm_idle_compact_absorbs_signal: an unannounced earlier turn-end blocks absorption"
   ) || exit 1
 }
 
@@ -761,6 +1002,16 @@ test_settling_past_window_records_done_and_next_sweep_is_noop
 test_done_unchanged_signatures_is_noop
 test_done_status_change_clears_marker_and_restarts_episode
 test_done_pane_change_clears_marker
+
+test_reset_stamp_holds_off_a_new_episode_for_a_full_window
+test_recent_turn_end_blocks_eligibility_despite_ancient_status
+test_recent_spawn_record_blocks_eligibility
+test_identical_repeated_status_append_ends_the_episode
+
+test_absorbs_the_induced_turn_exactly_once
+test_never_absorbs_a_status_signal
+test_absorbs_nothing_outside_an_in_flight_episode
+test_does_not_absorb_over_an_unannounced_earlier_turn_end
 
 test_tick_absent_config_is_grep_provably_inert
 test_tick_present_config_sweeps_eligible_task

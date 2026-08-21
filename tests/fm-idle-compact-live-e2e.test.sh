@@ -104,7 +104,11 @@ fi
 TASK=t1
 printf 'window=%s\nbackend=tmux\nharness=claude\nkind=ship\n' "$WIN" > "$STATE/$TASK.meta"
 printf 'done: fixture\n' > "$STATE/$TASK.status"
-touch -d '@1' "$STATE/$TASK.status"    # far in the past: any real threshold clears
+# Far in the past: any real threshold clears. The spawn record is aged with the
+# status log because the idle-duration basis is the newest of meta/status/
+# turn-ended, and in production fm-spawn.sh writes the meta once, at spawn,
+# always before the crew's own status appends.
+touch -d '@1' "$STATE/$TASK.status" "$STATE/$TASK.meta"
 printf '1\n' > "$CONFIG/idle-compact"  # 1-minute threshold
 
 # fm-crew-state.sh's own reconciliation contract is separately owned and
