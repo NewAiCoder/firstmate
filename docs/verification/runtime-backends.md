@@ -205,6 +205,36 @@ Cursor is deliberately outside this cursor-anchored empty-composer matrix becaus
 
 `zellij action dump-screen --pane-id <id> --ansi` was verified at zellij 0.44.0 to preserve ANSI styling (real Claude Code rendered inside a zellij pane dumped `ESC[m` `❯` U+00A0 for its idle composer row), which is the capability the zellij composer classifier reads.
 
+## Idle-worker pre-compaction
+
+The idle-compact eligibility gate (`bin/fm-idle-compact.sh`, `fm_idle_compact_safe_to_send`) composes two vendor-facing reads - `bin/fm-busy-lib.sh`'s `fm_busy_classify` and `bin/fm-backend.sh`'s `fm_backend_composer_state` - and must never send into a real Claude Code pane unless both read an exact `idle` + `empty` verdict.
+The live guard exercises this against a real installed Claude Code session on an isolated private tmux socket, with real busy-state records armed/applied via `bin/fm-busy-event.sh`, real composer reads via `bin/fm-backend.sh`, and no prompt ever submitted to Claude (`fm_idle_compact_send` stubbed to record instead of really sending).
+
+```sh
+FM_IDLE_COMPACT_LIVE=1 tests/fm-idle-compact-live-e2e.test.sh
+```
+
+Verified on 2026-08-21 against the shipped code on tmux 3.6, Linux x86_64 (WSL2), on an isolated private socket, with no prompt submitted to Claude.
+The guard asserts exactly the five checkpoints in its output below, and nothing beyond them: a real busy-state record blocks the send even when the composer itself reads empty, a real idle record plus a real empty composer together permit it, a real pending (unsubmitted) composer blocks it, a completed save turn into a real idle+empty pane sends `/compact` and records `phase=settling`, and the settle sweep reaches `phase=done` with no further send.
+The rest of the feature is proven by the portable regressions rather than here: the newest-of-meta/status/turn-ended idle-duration basis, the post-episode activity stamp, and the induced-turn absorption fence with its sweep-lock serialization live in `tests/fm-idle-compact.test.sh`, and the watcher-side absorb/wake fence lives in `tests/fm-watch-triage.test.sh`.
+
+Observed output:
+
+```text
+ok - claude (2.1.228 (Claude Code)): a real busy-state record correctly blocks the send through fm_busy_classify, even with a genuinely empty composer
+ok - claude (2.1.228 (Claude Code)): a real idle busy-state record plus a real empty Claude Code composer together permit the send through fm_idle_compact_safe_to_send
+ok - claude (2.1.228 (Claude Code)): a real pending (unsubmitted) composer correctly blocks the send
+ok - claude (2.1.228 (Claude Code)): a real idle+empty composer after the save turn completes sends /compact and reaches phase=settling
+ok - claude (2.1.228 (Claude Code)): the settle sweep captures the post-render baseline and reaches phase=done without further sends
+# no message was ever actually submitted to the live claude process - fm_idle_compact_send was stubbed throughout, so no model tokens were spent
+all fm-idle-compact-live-e2e checks passed
+```
+
+The same command is the refresh path after any Claude Code upgrade; rerun it and record the new version rather than trusting recorded evidence across releases.
+
+Only Claude is verified here - every other verified harness (`codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, `muse`) is reviewed and not applicable: none has a verified compaction slash-command surface today, so idle-compact's harness check (`harness=claude` in `state/<id>.meta`) skips them by construction rather than guessing at an unverified command.
+See `docs/configuration.md` "Idle-worker pre-compaction" and "Harness compatibility".
+
 ## Herdr
 
 The compatibility floor is protocol 14.
