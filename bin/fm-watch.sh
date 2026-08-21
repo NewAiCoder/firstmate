@@ -89,8 +89,11 @@ mkdir -p "$STATE"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
 # Opt-in idle-worker pre-cache-expiry compaction (config/idle-compact); ships
-# inert, see bin/fm-idle-compact.sh's header for the full contract.
-# shellcheck source=bin/fm-idle-compact.sh
+# inert, see bin/fm-idle-compact.sh's header for the full contract. It is
+# already a canonical lint root itself, and this file's combined source graph
+# is large enough that following it here exceeds the bounded CI lint worker
+# while adding no uncovered file, so stop expansion here as done above.
+# shellcheck source=/dev/null
 . "$SCRIPT_DIR/fm-idle-compact.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
