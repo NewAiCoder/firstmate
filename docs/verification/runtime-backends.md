@@ -214,7 +214,9 @@ The live guard exercises this against a real installed Claude Code session on an
 FM_IDLE_COMPACT_LIVE=1 tests/fm-idle-compact-live-e2e.test.sh
 ```
 
-Verified on 2026-08-21 against the shipped code (including the newest-of-meta/status/turn-ended idle-duration basis, the post-episode activity stamp, the induced-turn absorption fence, the settling phase, the pre-`/compact` eligibility re-check, the completed save message, and the sweep lock that now covers the signal path's marker write too) on tmux 3.6, Linux x86_64 (WSL2), on an isolated private socket, with no prompt submitted to Claude.
+Verified on 2026-08-21 against the shipped code on tmux 3.6, Linux x86_64 (WSL2), on an isolated private socket, with no prompt submitted to Claude.
+The guard asserts exactly the five checkpoints in its output below, and nothing beyond them: a real busy-state record blocks the send even when the composer itself reads empty, a real idle record plus a real empty composer together permit it, a real pending (unsubmitted) composer blocks it, a completed save turn into a real idle+empty pane sends `/compact` and records `phase=settling`, and the settle sweep reaches `phase=done` with no further send.
+The rest of the feature is proven by the portable regressions rather than here: the newest-of-meta/status/turn-ended idle-duration basis, the post-episode activity stamp, and the induced-turn absorption fence with its sweep-lock serialization live in `tests/fm-idle-compact.test.sh`, and the watcher-side absorb/wake fence lives in `tests/fm-watch-triage.test.sh`.
 
 Observed output:
 
