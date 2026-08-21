@@ -206,6 +206,14 @@ fm_idle_compact_marker_path() {  # <state> <task>
   printf '%s/.idle-compact-%s' "$1" "$key"
 }
 
+# The one mutual-exclusion boundary around every marker write in this file:
+# the sweep holds it for a whole sweep, and the watcher's signal path holds it
+# for its read-modify-write. One owner for the path so the two callers cannot
+# drift onto different locks.
+fm_idle_compact_lock_path() {  # <state>
+  printf '%s/.idle-compact.lock' "$1"
+}
+
 fm_idle_compact_marker_field() {  # <marker-file> <key>
   [ -f "$1" ] || return 1
   grep "^$2=" "$1" 2>/dev/null | tail -1 | cut -d= -f2- || true
@@ -375,12 +383,14 @@ fm_idle_compact_send() {  # <state> <task> <message>
 #     already surfaced or deliberately absorbed. This is the provenance gate
 #     bin/fm-wake-lib.sh's fm_wake_status_append_self_announced applies to the
 #     same marker format, and it fails toward waking: an unannounced foreign
-#     turn-end pending on the file means this signal is not provably ours.
+#     turn-end pending on the file means this signal is not provably ours;
+#   - only while no sweep holds this home's idle-compact lock, under which the
+#     whole read-modify-write below then runs.
 # Every other condition - a missing marker, an unreadable signature, a
 # malformed epoch, clock skew - returns 1, and the signal wakes the captain
 # exactly as it does today.
 fm_idle_compact_absorbs_signal() {  # <state> <signal-file> [signature]
-  local state=$1 file=$2 sig=${3:-} task marker phase epoch baseline absorbed now
+  local state=$1 file=$2 sig=${3:-} task marker lock rc
 
   case "$file" in *.turn-ended) ;; *) return 1 ;; esac
   task=$(basename "$file"); task=${task%.turn-ended}
@@ -388,6 +398,33 @@ fm_idle_compact_absorbs_signal() {  # <state> <signal-file> [signature]
 
   marker=$(fm_idle_compact_marker_path "$state" "$task")
   [ -f "$marker" ] || return 1
+
+  [ -n "$sig" ] || sig=$(fm_wake_signal_sig "$file" 2>/dev/null || true)
+  [ -n "$sig" ] || return 1
+
+  # This runs from bin/fm-watch.sh's triage loop, NOT from fm_idle_compact_tick,
+  # so it holds no lock of its own: without this the away-mode daemon's
+  # concurrent housekeeping sweep and this rewrite can interleave on the same
+  # marker, and a stale phase=save-sent restored over a landed phase=settling
+  # would send a SECOND /compact for one episode. A lock already held means a
+  # sweep is mid-flight on this home, which is exactly when this signal is not
+  # provably ours - so decline and let it wake, the direction every other arm
+  # of this predicate already fails toward.
+  lock=$(fm_idle_compact_lock_path "$state")
+  fm_lock_try_acquire "$lock" || return 1
+  fm_idle_compact_absorbs_signal_locked "$state" "$file" "$sig" "$marker"
+  rc=$?
+  fm_lock_release "$lock"
+  return "$rc"
+}
+
+# The decision itself, with the episode marker held still by the caller's lock:
+# every field read below and the write that follows them are one atomic
+# read-modify-write, so a concurrent sweep can neither be read half-applied nor
+# have its own marker write clobbered by a stale rewrite from here.
+fm_idle_compact_absorbs_signal_locked() {  # <state> <signal-file> <signature> <marker>
+  local state=$1 file=$2 sig=$3 marker=$4 phase epoch baseline absorbed now
+
   phase=$(fm_idle_compact_marker_field "$marker" phase)
   case "$phase" in
     save-sent) epoch=$(fm_idle_compact_marker_field "$marker" sent_epoch) ;;
@@ -398,9 +435,6 @@ fm_idle_compact_absorbs_signal() {  # <state> <signal-file> [signature]
   now=$(date +%s)
   [ "$now" -ge "$epoch" ] || return 1
   [ $(( now - epoch )) -lt "${FM_IDLE_COMPACT_SAVE_TIMEOUT_SECS:-900}" ] || return 1
-
-  [ -n "$sig" ] || sig=$(fm_wake_signal_sig "$file" 2>/dev/null || true)
-  [ -n "$sig" ] || return 1
 
   absorbed=$(fm_idle_compact_marker_field "$marker" absorbed_turnended)
   if [ -n "$absorbed" ]; then
@@ -576,7 +610,7 @@ fm_idle_compact_tick() {  # <state> [config-dir]
   # sweeping, so skipping is silent routine. The due-check re-runs under the
   # lock because the loser of the race may acquire only after the winner
   # released, with the marker already freshly touched.
-  lock="$state/.idle-compact.lock"
+  lock=$(fm_idle_compact_lock_path "$state")
   fm_lock_try_acquire "$lock" || return 0
   if ! fm_idle_compact_sweep_due "$state"; then
     fm_lock_release "$lock"

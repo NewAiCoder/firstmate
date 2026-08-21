@@ -214,7 +214,7 @@ The live guard exercises this against a real installed Claude Code session on an
 FM_IDLE_COMPACT_LIVE=1 tests/fm-idle-compact-live-e2e.test.sh
 ```
 
-Verified on 2026-08-13 against the shipped code (including the review-round settling phase, the pre-`/compact` eligibility re-check, the completed save message, and the sweep lock) on tmux 3.6, Linux x86_64 (WSL2), on an isolated private socket, with no prompt submitted to Claude.
+Verified on 2026-08-21 against the shipped code (including the newest-of-meta/status/turn-ended idle-duration basis, the post-episode activity stamp, the induced-turn absorption fence, the settling phase, the pre-`/compact` eligibility re-check, the completed save message, and the sweep lock that now covers the signal path's marker write too) on tmux 3.6, Linux x86_64 (WSL2), on an isolated private socket, with no prompt submitted to Claude.
 
 Observed output:
 

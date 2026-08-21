@@ -847,6 +847,43 @@ test_absorbs_nothing_outside_an_in_flight_episode() {
   ) || exit 1
 }
 
+test_does_not_absorb_while_a_sweep_holds_the_lock() {
+  (
+    local dir state marker lock holder_pid now
+    dir=$(new_dir absorb-lockheld); state="$dir/state"
+    write_task_meta "$state" t1
+    now=$(date +%s)
+    marker=$(arm_induced_turn "$state" t1 "$((now - 5))")
+
+    # The signal path runs from the watcher's triage loop, not from the sweep,
+    # so a concurrent supervisor (a DIFFERENT live pid - the same pid would
+    # take fm_lock_try_acquire's self-held reclaim path) can be mid-sweep on
+    # this very marker. Its write and this one must not interleave.
+    lock=$(fm_idle_compact_lock_path "$state")
+    ( fm_lock_try_acquire "$lock" && sleep 30 ) &
+    holder_pid=$!
+    for _ in $(seq 1 50); do
+      [ -L "$lock" ] && break
+      sleep 0.1
+    done
+    [ -L "$lock" ] || fail "fixture: background holder never acquired the sweep lock"
+
+    fm_idle_compact_absorbs_signal "$state" "$state/t1.turn-ended" \
+      && { kill "$holder_pid" 2>/dev/null; fail "a turn-end must not be absorbed while a sweep holds the marker's lock"; }
+    [ -z "$(fm_idle_compact_marker_field "$marker" absorbed_turnended)" ] \
+      || { kill "$holder_pid" 2>/dev/null; fail "a locked-out absorption must not have rewritten the episode marker"; }
+
+    kill "$holder_pid" 2>/dev/null || true
+    wait "$holder_pid" 2>/dev/null || true
+
+    # Released, the same signal is absorbed as before - the lock defers the
+    # decision, it does not discard the episode.
+    fm_idle_compact_absorbs_signal "$state" "$state/t1.turn-ended" \
+      || fail "once the sweep lock is released the induced turn-end must be absorbed again"
+    pass "fm_idle_compact_absorbs_signal: a sweep holding the idle-compact lock defers absorption instead of racing its marker write"
+  ) || exit 1
+}
+
 test_does_not_absorb_over_an_unannounced_earlier_turn_end() {
   (
     local dir state now
@@ -1012,6 +1049,7 @@ test_absorbs_the_induced_turn_exactly_once
 test_never_absorbs_a_status_signal
 test_absorbs_nothing_outside_an_in_flight_episode
 test_does_not_absorb_over_an_unannounced_earlier_turn_end
+test_does_not_absorb_while_a_sweep_holds_the_lock
 
 test_tick_absent_config_is_grep_provably_inert
 test_tick_present_config_sweeps_eligible_task
