@@ -6,6 +6,54 @@ This record contains reusable version-scoped evidence for active runtime guarant
 The backend guides own current setup, safety boundaries, and limitations.
 Exact task chronology, branch names, temporary homes, local paths, process ids, thread ids, and delivery transcripts remain in private reports or PR evidence.
 
+## Harness detection precedence
+
+Firstmate's own harness comes from two kinds of evidence, and `bin/fm-harness.sh` owns how they combine: an environment marker names its harness, and the nearest harness process in the parent chain proves who owns the process tree.
+A marker alone is not proof of ownership, because it is ordinary environment state that a child inherits and a terminal multiplexer can replay into an unrelated session.
+Verified on 2026-09-01 on Linux 7.1.10 with the portable regression, which builds every case from real renamed processes and no installed harness:
+
+```sh
+bin/fm-test-run.sh tests/fm-harness-precedence.test.sh
+```
+
+Observed output:
+
+```text
+ok - a markerless harness keeps its identity under an inherited foreign marker
+ok - a harness that publishes a marker inside its own process tree is unchanged
+ok - with ancestry silent, the marker layer and its cursor-first ordering still decide
+ok - a retained cursor marker does not rename a nested claude worker
+ok - an agreeing marker keeps Pi's finer identity that ancestry cannot prove
+ok - an interpreter script-path match answers alone but never outranks a marker
+ok - a native harness binary under an interpreter shim decides at comm strength
+ok - session start renders the Codex protocol for a Codex primary holding a retained CLAUDECODE
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=1815
+```
+
+Before that boundary existed, a Codex session started from an environment that had retained `CLAUDECODE=1` reported `claude`, and session start emitted Claude's Stop-owned supervision protocol to a Codex primary.
+The same live shape, reproduced with a real process named `codex` and no installed harness, now reports `codex` with the marker present and `claude` with the marker present and ancestry blinded, which is what proves the case is not vacuous.
+
+### Real harness process names behind the walk
+
+The detection half of the opt-in drift guard asks the ancestry walk what it makes of each INSTALLED harness's real running process:
+
+```sh
+FM_HARNESS_LIVENESS_DRIFT=1 bin/fm-test-run.sh tests/fm-harness-liveness-drift-live-e2e.test.sh
+```
+
+Observed on 2026-09-01 for the harnesses installed on that machine:
+
+```text
+# claude 2.1.252 (Claude Code): title='claude' foreground=[claude ]
+# claude 2.1.252 (Claude Code): ancestry='comm claude'
+# codex codex-cli 0.152.0: title='node' foreground=[node codex ]
+# codex codex-cli 0.152.0: ancestry='args codex'
+```
+
+Codex ships as a `node` npm shim that spawns its native `codex` binary as a foreground child, so the pane process itself is identified from its script path while a tool subprocess reaches the native process name directly.
+That is why the guard asserts the harness identity and never the signal that carried it, and why the portable regression pins that two-process topology: the fix for a retained marker depends on the native child being what a tool subprocess meets first.
+The run did not reach `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, or `muse`, which were not installed, and stopped at a pre-existing liveness failure for `cursor` 3.18.9, whose resolved binary on that machine is the editor rather than `cursor-agent`; those adapters are unverified by this run.
+
 ## tmux
 
 Foreground-process behavior was verified on 2026-07-07 with tmux 3.6a on macOS.

@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 # tests/fm-harness-liveness-drift-live-e2e.test.sh - opt-in drift guard proving
 # every INSTALLED harness is still classified `alive` by the tmux liveness
-# probe (bin/backends/tmux.sh).
+# probe (bin/backends/tmux.sh) AND still identified by the harness-detection
+# ancestry walk (bin/fm-harness.sh).
 #
-# Why this file exists: liveness classification depends on how a harness names
-# its own process, which is a surface the harness vendor controls and changes
-# without notice. Claude Code began reporting its version string as its process
-# name and became unattributable, which silently degraded supervision. A
-# regression that only a real harness release can cause needs a check that runs
-# real harnesses; a stubbed agent cannot see it, and neither can a table of
-# names transcribed from a previous release.
+# Why this file exists: both verdicts depend on how a harness names its own
+# process, which is a surface the harness vendor controls and changes without
+# notice. Claude Code began reporting its version string as its process name and
+# became unattributable, which silently degraded supervision. A regression that
+# only a real harness release can cause needs a check that runs real harnesses;
+# a stubbed agent cannot see it, and neither can a table of names transcribed
+# from a previous release.
+#
+# Detection carries the same exposure for a second reason: a structural ancestor
+# now outranks an environment marker (bin/fm-harness.sh owns that boundary), so
+# a harness whose process name stops matching no longer merely loses a fast
+# path - the walk keeps climbing and can reach a DIFFERENT harness that really
+# is further up the tree. This guard is what catches that at the release that
+# causes it.
 #
 # Each harness is launched bare, with no prompt, so this consumes no model
 # tokens. The launch uses whatever credentials the harness already has; an
@@ -136,6 +144,25 @@ for harness in claude codex opencode pi pi-signed grok kimi cursor muse; do
   note "$harness $version: title='$title' foreground=[$comms]"
 
   pass "harness liveness: $harness $version classifies alive"
+
+  # Detection: ask the ancestry walk what it makes of this real harness process.
+  # Both Pi identities share one launcher name, so ancestry can only ever prove
+  # the family; only the launch-boundary marker selects the signed identity.
+  expect_harness=$harness
+  [ "$harness" = pi-signed ] && expect_harness=pi
+  pane_pid=$("$REAL_TMUX" -L "$SOCKET" display-message -p -t "$target" '#{pane_pid}' 2>/dev/null | tr -d ' ')
+  [ -n "$pane_pid" ] || fail "$harness ($version): could not read the pane pid for the detection probe"
+  # Strength is deliberately not asserted. A harness that ships as a thin
+  # interpreter shim spawning its native binary as a CHILD is identified here at
+  # the weaker script-path strength, while firstmate's own detection walks up
+  # from a tool subprocess and reaches the native process name directly. The
+  # identity is the guarantee; which signal carried it is not.
+  ancestry=$("$ROOT/bin/fm-harness.sh" ancestry "$pane_pid" 2>/dev/null || true)
+  [ "${ancestry#* }" = "$expect_harness" ] || fail \
+    "DETECTION DRIFT: $harness $version is running but the ancestry walk reports '${ancestry:-nothing}', not '$expect_harness'. bin/fm-harness.sh now lets a structural ancestor outrank an environment marker, so an unmatched process name can resolve to a DIFFERENT harness further up the tree instead of merely losing a fast path. Observed process title '$title'; observed foreground process names [$comms]. Teach bin/fm-harness.sh's harness_ancestry the name this release actually reports."
+
+  note "$harness $version: ancestry='$ancestry'"
+  pass "harness detection: $harness $version is identified by the ancestry walk"
   CHECKED=$((CHECKED + 1))
 done
 

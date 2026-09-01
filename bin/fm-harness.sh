@@ -13,13 +13,28 @@
 #                                        config/secondmate-harness, or empty when absent.
 #        fm-harness.sh secondmate-effort   print the optional EFFORT token from
 #                                        config/secondmate-harness, or empty when absent.
+#        fm-harness.sh ancestry [<pid>] print "<strength> <harness>" for the nearest
+#                                        harness process at or above <pid> (default this
+#                                        process), or nothing when the walk finds none.
+#                                        Ancestry evidence only, with no marker layer, so
+#                                        a real harness process can be asked what the walk
+#                                        makes of it (tests/fm-harness-liveness-drift-live-e2e.test.sh).
 # config/secondmate-harness format: a single line "<harness> [<model>] [<effort>]",
 # whitespace-separated. A bare "<harness>" (today's format) behaves exactly as before:
 # harness only, no model/effort. Only the first non-empty, non-comment line is parsed.
 # Model/effort come ONLY from this file - config/crew-harness stays a bare adapter
 # name and is never parsed for a model.
-# Detection layers: verified environment markers first, then process ancestry.
-# Record each newly verified env marker here.
+# Detection evidence and precedence:
+#   Markers  - verified environment variables a harness publishes about itself.
+#              Cheap and unambiguous about WHICH harness set them, but they are
+#              ordinary environment state: a child inherits them, and a terminal
+#              multiplexer can replay a stale one into an unrelated session.
+#   Ancestry - the nearest harness process in this process's parent chain. This
+#              is the structural fact about who actually owns the process tree,
+#              so it is what settles a disagreement.
+# detect_own is the single owner of how the two combine; harness_marker and
+# harness_ancestry only report evidence. Record each newly verified env marker
+# in harness_marker, and each newly verified command name in harness_ancestry.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,24 +45,18 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # shellcheck source=bin/fm-cursor-lib.sh
 . "$SCRIPT_DIR/fm-cursor-lib.sh"
 
-detect_own() {
-  # Layer 1: environment markers for verified harnesses.
-  # Keep marker detection before ancestry detection as an explicit precedence rule.
-  # Claude, Pi, Grok, and Cursor set verified markers of their own; codex,
-  # opencode, Kimi, and Muse are markerless, so a foreign marker retained in a terminal
-  # multiplexer's stored environment can silently misidentify one of them before
-  # ancestry is consulted. This is a precedence hazard, not evidence that
-  # CLAUDECODE inheritance into a kimi child was observed; it was not observed.
-  # Cursor is checked BEFORE claude, deliberately. cursor-agent does NOT clear
-  # an inherited CLAUDECODE, so a cursor worker launched from a claude primary
-  # carries BOTH markers and whichever is tested first wins. Cursor's own
-  # markers are unambiguous when present, so ordering them first is what makes
-  # the verdict correct; bin/fm-spawn.sh additionally clears the foreign markers
-  # at the launch boundary. Both are kept: the launch sanitization only covers
-  # sessions fm-spawn started, while this ordering also covers a cursor session
-  # a human started by hand. Verified live on cursor-agent 2026.08.11-e8db854:
-  # CURSOR_INVOKED_AS=cursor-agent is set on the agent process itself, and
-  # CURSOR_AGENT=1 is set for the child/tool processes this script runs as.
+# Print the harness named by a verified environment marker, or nothing when no
+# marker is present. Markers only report what the environment CLAIMS; detect_own
+# decides whether that claim survives contradicting ancestry.
+harness_marker() {
+  # Cursor is tested BEFORE claude, deliberately. cursor-agent does NOT clear an
+  # inherited CLAUDECODE, so a cursor session started by hand from a claude
+  # primary carries BOTH markers and whichever is tested first wins. This
+  # ordering only settles the case where ancestry finds nothing to arbitrate
+  # with; a nearer claude ancestor still outranks both in detect_own.
+  # Verified live on cursor-agent 2026.08.11-e8db854: CURSOR_INVOKED_AS=cursor-agent
+  # is set on the agent process itself, and CURSOR_AGENT=1 is set for the
+  # child/tool processes this script runs as.
   [ "${CURSOR_AGENT:-}" = "1" ] && { echo cursor; return; }
   [ "${CURSOR_INVOKED_AS:-}" = "cursor-agent" ] && { echo cursor; return; }
   [ "${CLAUDECODE:-}" = "1" ] && { echo claude; return; }
@@ -65,45 +74,63 @@ detect_own() {
   # identified, and any rule that must be RELIABLE under grok has to test the hook
   # markers too (see .claude/settings.json Stop entries, docs/turnend-guard.md).
   [ "${GROK_AGENT:-}" = "1" ] && { echo grok; return; }
-  # muse (Muse Code) publishes no harness-identity marker of its own. The only
-  # MUSE_* variable it is documented to hand a child is MUSE_CURRENT_SESSION_LOG,
-  # a per-session log PATH rather than an identity, and its export to tool
-  # subprocesses is unverified (verified: muse 0.1.0-R708.1), so muse is detected
-  # by ancestry alone below. Do NOT promote MUSE_CURRENT_SESSION_LOG to a marker
-  # without verifying it reaches children AND that it cannot survive in a
-  # multiplexer's stored environment, which is the precedence hazard above.
-  # Layer 2: walk the parent chain and match the command name.
-  local pid=$$ comm args argv0
+  # codex, opencode, kimi, and muse publish no harness-identity marker at all, so
+  # they are never named here and are identified by ancestry alone. That is the
+  # whole reason a foreign marker must not outrank ancestry: with markers winning
+  # unconditionally, any retained CLAUDECODE would silently rename one of them.
+  # muse's only documented child variable is MUSE_CURRENT_SESSION_LOG, a
+  # per-session log PATH rather than an identity, and its export to tool
+  # subprocesses is unverified (verified: muse 0.1.0-R708.1). Do NOT promote it
+  # to a marker without verifying it reaches children AND that it cannot survive
+  # in a multiplexer's stored environment.
+  return 0
+}
+
+# Print "<strength> <harness>" for the NEAREST harness process in the parent
+# chain, or nothing when the walk finds none. The nearest match wins, so a
+# worker nested inside another harness resolves to its own harness. Strength
+# records how the match was made:
+#   comm - the ancestor's own executable name identifies the harness. This is a
+#          structural fact about the running program, so it outranks a marker.
+#   args - a bare interpreter matched only because a harness name appears in the
+#          script path it was handed. This is the weakest inference in this file
+#          (any node process holding a harness-shaped path matches it), so it is
+#          used only when no marker is present.
+harness_ancestry() {  # [<pid>]
+  local pid=${1:-$$} comm args argv0
   for _ in 1 2 3 4 5 6 7 8; do
     comm=$(ps -o comm= -p "$pid" 2>/dev/null) || break
     argv0=$(fm_cursor_argv0_for_pid "$pid" "$comm" 2>/dev/null || true)
     if fm_cursor_process_matches "$comm" '' "$argv0"; then
-      echo cursor
+      echo "comm cursor"
       return
     fi
     case "$(basename -- "$comm")" in
-      *claude*) echo claude; return ;;
-      *codex*) echo codex; return ;;
-      *opencode*) echo opencode; return ;;
-      *grok*) echo grok; return ;;
-      kimi) echo kimi; return ;;
+      *claude*) echo "comm claude"; return ;;
+      *codex*) echo "comm codex"; return ;;
+      *opencode*) echo "comm opencode"; return ;;
+      *grok*) echo "comm grok"; return ;;
+      kimi) echo "comm kimi"; return ;;
       # muse's installed launcher ~/.local/bin/muse execs ~/.local/bin/muse-bin-<version>
       # (verified in the published launcher, muse 0.1.0-R708.1), so the live process
       # name carries the version and CHANGES on every auto-update. Match the stable
       # prefix rather than any exact name. Deliberately anchored, never *muse*, so
       # unrelated commands (musescore, amuse) cannot be misread as this harness.
-      muse|muse-bin-*) echo muse; return ;;
-      pi-signed) echo pi; return ;;
-      pi) echo pi; return ;;
+      muse|muse-bin-*) echo "comm muse"; return ;;
+      # Both Pi identities share this launcher name. Ancestry can only prove the
+      # FAMILY; only the launch-boundary marker selects the signed identity, which
+      # is why detect_own keeps a marker that agrees on the family.
+      pi-signed) echo "comm pi"; return ;;
+      pi) echo "comm pi"; return ;;
       node*|python*)
         # Bare interpreter: match the harness name in its script path.
         args=$(ps -o args= -p "$pid" 2>/dev/null)
         case "$args" in
-          *claude*) echo claude; return ;;
-          *codex*) echo codex; return ;;
-          *opencode*) echo opencode; return ;;
-          *grok*) echo grok; return ;;
-          *" pi "*|*/pi) echo pi; return ;;
+          *claude*) echo "args claude"; return ;;
+          *codex*) echo "args codex"; return ;;
+          *opencode*) echo "args opencode"; return ;;
+          *grok*) echo "args grok"; return ;;
+          *" pi "*|*/pi) echo "args pi"; return ;;
         esac ;;
     esac
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
@@ -111,7 +138,49 @@ detect_own() {
       break
     fi
   done
-  echo unknown
+  return 0
+}
+
+# Collapse a verdict to the harness FAMILY its evidence can actually prove, so a
+# marker's more specific verdict and ancestry's coarser one are not read as a
+# disagreement. Only Pi has two identities behind one launcher name.
+harness_family() {
+  case "$1" in
+    pi-signed) printf 'pi\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+# Combine the two evidence layers. The precedence boundary, in one rule: a
+# marker names its harness, but only ancestry proves which harness owns this
+# process tree, so a structural (comm) ancestor of a DIFFERENT harness wins.
+#   - No ancestry match: the marker is the only evidence there is.
+#   - No marker: ancestry is the only evidence there is.
+#   - Same family: keep the marker's verdict, which is the more specific one
+#     (pi-signed, which ancestry can only see as pi).
+#   - Different harness, structural ancestor: ancestry wins. This is what stops
+#     an inherited or multiplexer-retained CLAUDECODE from renaming a markerless
+#     codex, opencode, kimi, or muse session, and symmetrically stops a retained
+#     CURSOR_AGENT from renaming a claude worker nested under cursor.
+#   - Different harness, interpreter-args ancestor only: the marker wins, because
+#     a harness-shaped path in some node process's arguments is weaker evidence
+#     than a harness publishing its own identity.
+detect_own() {
+  local marker ancestry strength harness
+  marker=$(harness_marker)
+  ancestry=$(harness_ancestry)
+  if [ -z "$ancestry" ]; then
+    if [ -n "$marker" ]; then echo "$marker"; else echo unknown; fi
+    return
+  fi
+  strength=${ancestry%% *}
+  harness=${ancestry#* }
+  [ -n "$marker" ] || { echo "$harness"; return; }
+  if [ "$(harness_family "$marker")" = "$(harness_family "$harness")" ]; then
+    echo "$marker"
+    return
+  fi
+  if [ "$strength" = comm ]; then echo "$harness"; else echo "$marker"; fi
 }
 
 # Resolve the effective crewmate harness: config/crew-harness (a bare adapter
@@ -187,6 +256,12 @@ resolve_secondmate_effort() {
 }
 
 case "${1:-}" in
+  ancestry)
+    case "${2:-}" in
+      ''|*[!0-9]*) [ -z "${2:-}" ] || { echo "error: ancestry takes a numeric pid" >&2; exit 2; } ;;
+    esac
+    harness_ancestry "${2:-$$}"
+    ;;
   crew) resolve_crew ;;
   secondmate) resolve_secondmate ;;
   secondmate-model) resolve_secondmate_model ;;

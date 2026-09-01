@@ -1,0 +1,317 @@
+#!/usr/bin/env bash
+# Behavior tests for bin/fm-harness.sh's marker-vs-ancestry precedence boundary,
+# and for the supervision protocol session start selects from it.
+#
+# The bug this pins: a Codex session started from an environment that had
+# retained CLAUDECODE=1 detected as claude, because a verified marker outranked
+# ancestry unconditionally. Session start then emitted Claude's Stop-owned
+# supervision protocol to a Codex primary, which blocked every turn end.
+#
+# Every case drives the two evidence layers APART deliberately and asserts each
+# one alone as well as the combination, so no case can pass vacuously if a layer
+# silently stops working:
+#   marker alone   - ancestry blinded by a fake ps, proving the marker is live
+#                    and is what the old precedence would have returned.
+#   ancestry alone - marker cleared, proving the ancestry signal is live.
+#   both together  - the precedence verdict this file exists to pin.
+# The fake ps blinds only the ancestry walk, and the suite proves that rather
+# than assuming it. fm-harness.sh reads process ancestry through ps alone; the
+# one source it does not read through ps is the Cursor argv[0] probe, which on
+# Linux reads /proc directly and on macOS falls back to ps. Either way it
+# resolves the harmless real path of a bash-named process, which
+# fm_cursor_process_matches rejects. The no-marker case below asserts `unknown`
+# under the fake ps on whichever platform the run happens on, and it is exactly
+# that case that fails if the blinding ever leaks a real ancestor through.
+set -u
+
+# shellcheck source=tests/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+# This suite states the markers it means to test in every case. Drop the ambient
+# ones so a verdict never depends on which harness launched the suite.
+unset CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT CURSOR_AGENT CURSOR_INVOKED_AS
+
+HARNESS="$ROOT/bin/fm-harness.sh"
+RENDER="$ROOT/bin/fm-supervision-instructions.sh"
+TMP_ROOT=$(fm_test_tmproot fm-harness-precedence)
+BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
+
+# A real process named after a harness, asked for its verdict from a child.
+# The command substitution around the probe is load-bearing: a bare `-c <cmd>`
+# lets the shell exec the probe in place, which REPLACES the harness-named
+# process the walk is supposed to find.
+under_process() {  # <named-executable> [VAR=VAL ...]
+  local bin=$1
+  shift
+  env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    -u CURSOR_AGENT -u CURSOR_INVOKED_AS "$@" \
+    "$bin" -c "r=\$(\"$HARNESS\"); printf '%s' \"\$r\""
+}
+
+# A fake ps that reports a bash ancestor terminating at pid 1, so the ancestry
+# layer proves nothing and only the marker layer can answer.
+blind_ancestry_bin() {  # <dir>
+  local fakebin
+  fakebin=$(fm_fakebin "$1")
+  cat > "$fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *'ppid='*) printf '%s\n' 1 ;;
+  *) printf '%s\n' bash ;;
+esac
+SH
+  chmod +x "$fakebin/ps"
+  printf '%s\n' "$fakebin"
+}
+
+with_blind_ancestry() {  # <fakebin> [VAR=VAL ...]
+  local fakebin=$1
+  shift
+  env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    -u CURSOR_AGENT -u CURSOR_INVOKED_AS "$@" \
+    PATH="$fakebin:$BASE_PATH" "$HARNESS"
+}
+
+named_bin() {  # <dir> <name>
+  mkdir -p "$1"
+  cp "$(command -v bash)" "$1/$2"
+  printf '%s\n' "$1/$2"
+}
+
+# --- 1. A foreign marker never renames a markerless harness -----------------
+
+# codex, opencode, kimi, and muse publish no identity marker, so before this
+# boundary existed ANY retained marker renamed them outright. This is the
+# reported live failure, generalized to every markerless adapter and to both
+# foreign markers that can be retained.
+test_markerless_ancestry_outranks_foreign_marker() {
+  local dir fakebin bin got name
+  dir="$TMP_ROOT/markerless"
+  fakebin=$(blind_ancestry_bin "$dir/blind")
+  for name in codex opencode kimi muse-bin-0.1.0; do
+    bin=$(named_bin "$dir/$name-tree" "$name")
+    local expect=$name
+    case "$name" in muse-bin-*) expect=muse ;; esac
+
+    got=$(under_process "$bin")
+    [ "$got" = "$expect" ] \
+      || fail "$name ancestry alone resolved '$got', expected $expect (the ancestry signal is not live)"
+
+    got=$(with_blind_ancestry "$fakebin" CLAUDECODE=1)
+    [ "$got" = claude ] \
+      || fail "an inherited CLAUDECODE alone resolved '$got', expected claude (the marker signal is not live)"
+
+    got=$(under_process "$bin" CLAUDECODE=1)
+    [ "$got" = "$expect" ] \
+      || fail "$name ancestry with an inherited CLAUDECODE resolved '$got', expected $expect"
+
+    got=$(under_process "$bin" CURSOR_AGENT=1)
+    [ "$got" = "$expect" ] \
+      || fail "$name ancestry with an inherited CURSOR_AGENT resolved '$got', expected $expect"
+  done
+  pass "a markerless harness keeps its identity under an inherited foreign marker"
+}
+
+# --- 2. A genuine harness in its own process tree still wins ----------------
+
+test_genuine_marker_and_ancestry_agree() {
+  local dir bin got
+  dir="$TMP_ROOT/genuine"
+
+  bin=$(named_bin "$dir/claude-tree" claude)
+  got=$(under_process "$bin" CLAUDECODE=1)
+  [ "$got" = claude ] || fail "a genuine claude session resolved '$got', expected claude"
+
+  bin=$(named_bin "$dir/cursor-tree" cursor-agent)
+  got=$(under_process "$bin" CURSOR_AGENT=1)
+  [ "$got" = cursor ] || fail "a genuine cursor session resolved '$got', expected cursor"
+  got=$(under_process "$bin" CURSOR_INVOKED_AS=cursor-agent)
+  [ "$got" = cursor ] || fail "a genuine cursor session (launcher marker) resolved '$got', expected cursor"
+
+  bin=$(named_bin "$dir/grok-tree" grok)
+  got=$(under_process "$bin" GROK_AGENT=1)
+  [ "$got" = grok ] || fail "a genuine grok session resolved '$got', expected grok"
+  # grok 1.0.0 hook processes carry no GROK_AGENT at all, so ancestry alone must
+  # still answer for them.
+  got=$(under_process "$bin")
+  [ "$got" = grok ] || fail "an unmarked grok hook process resolved '$got', expected grok"
+
+  pass "a harness that publishes a marker inside its own process tree is unchanged"
+}
+
+# Cursor is the case that motivated the pre-existing marker ordering: a cursor
+# session started by hand under a claude primary carries BOTH markers. Ancestry
+# is silent about which owns the tree there, so the ordering still decides.
+test_cursor_ordering_still_decides_when_ancestry_is_silent() {
+  local fakebin got
+  fakebin=$(blind_ancestry_bin "$TMP_ROOT/cursor-ordering")
+  got=$(with_blind_ancestry "$fakebin" CLAUDECODE=1 CURSOR_AGENT=1)
+  [ "$got" = cursor ] || fail "both markers with no ancestry resolved '$got', expected cursor"
+  got=$(with_blind_ancestry "$fakebin" CLAUDECODE=1 CURSOR_INVOKED_AS=cursor-agent)
+  [ "$got" = cursor ] || fail "both markers (launcher form) with no ancestry resolved '$got', expected cursor"
+  got=$(with_blind_ancestry "$fakebin" CLAUDECODE=1)
+  [ "$got" = claude ] || fail "CLAUDECODE with no ancestry resolved '$got', expected claude"
+  got=$(with_blind_ancestry "$fakebin")
+  [ "$got" = unknown ] \
+    || fail "no marker and no ancestry resolved '$got', expected unknown"
+  pass "with ancestry silent, the marker layer and its cursor-first ordering still decide"
+}
+
+# The symmetric half of the same bug: cursor-agent's marker reaches a nested
+# claude worker's environment, and the nearer claude ancestor must win.
+test_retained_cursor_marker_does_not_rename_a_nested_claude() {
+  local bin got
+  bin=$(named_bin "$TMP_ROOT/nested-claude" claude)
+  got=$(under_process "$bin" CURSOR_AGENT=1 CLAUDECODE=1)
+  [ "$got" = claude ] \
+    || fail "a claude tree carrying a retained CURSOR_AGENT resolved '$got', expected claude"
+  got=$(under_process "$bin" CURSOR_INVOKED_AS=cursor-agent CLAUDECODE=1)
+  [ "$got" = claude ] \
+    || fail "a claude tree carrying a retained cursor launcher marker resolved '$got', expected claude"
+  pass "a retained cursor marker does not rename a nested claude worker"
+}
+
+# --- 3. Pi keeps the marker's more specific identity ------------------------
+
+# Both Pi identities share the launcher name, so ancestry can only prove the
+# family. A marker that agrees on the family must keep its finer verdict rather
+# than being flattened to pi by the ancestry walk.
+test_pi_signed_survives_agreeing_ancestry() {
+  local bin got
+  bin=$(named_bin "$TMP_ROOT/pi-tree" pi)
+  got=$(under_process "$bin" PI_CODING_AGENT=true FM_PI_HARNESS=pi-signed)
+  [ "$got" = pi-signed ] || fail "signed Pi over pi ancestry resolved '$got', expected pi-signed"
+  got=$(under_process "$bin" PI_CODING_AGENT=true)
+  [ "$got" = pi ] || fail "plain Pi over pi ancestry resolved '$got', expected pi"
+  got=$(under_process "$bin")
+  [ "$got" = pi ] || fail "unmarked pi ancestry resolved '$got', expected pi"
+
+  bin=$(named_bin "$TMP_ROOT/pi-signed-tree" pi-signed)
+  got=$(under_process "$bin" PI_CODING_AGENT=true FM_PI_HARNESS=pi-signed)
+  [ "$got" = pi-signed ] \
+    || fail "signed Pi over shared signed-wrapper ancestry resolved '$got', expected pi-signed"
+  got=$(under_process "$bin")
+  [ "$got" = pi ] \
+    || fail "unmarked signed-wrapper ancestry resolved '$got', expected pi"
+  pass "an agreeing marker keeps Pi's finer identity that ancestry cannot prove"
+}
+
+# --- 4. The weakest ancestry signal does not outrank a marker ---------------
+
+# A bare interpreter matched only by a harness name inside the script path it
+# was handed is the weakest inference in fm-harness.sh: any node process holding
+# a harness-shaped path matches it. It answers when nothing else does, but it
+# must not overturn a harness publishing its own identity.
+test_interpreter_args_match_does_not_outrank_a_marker() {
+  local dir node script got
+  dir="$TMP_ROOT/weak-args"
+  node=$(named_bin "$dir" node)
+  script="$dir/codex-tool.sh"
+  cat > "$script" <<SH
+r=\$("$HARNESS"); printf '%s' "\$r"
+SH
+
+  got=$(env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    -u CURSOR_AGENT -u CURSOR_INVOKED_AS "$node" "$script")
+  [ "$got" = codex ] \
+    || fail "an unmarked interpreter holding a codex-shaped script path resolved '$got', expected codex"
+
+  got=$(env -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDECODE=1 "$node" "$script")
+  [ "$got" = claude ] \
+    || fail "a published CLAUDECODE lost to a codex-shaped script path, resolving '$got'"
+  pass "an interpreter script-path match answers alone but never outranks a marker"
+}
+
+# The real Codex install topology, pinned because the fix depends on it. codex
+# ships as a `node` npm shim that spawns its native `codex` binary as a child
+# and waits, so a tool subprocess reaches the native process name FIRST and is
+# decided at comm strength. Verified live on 2026-09-01 with codex-cli 0.152.0,
+# whose pane foreground process names were [node codex]. If a future release
+# stopped exec'ing a native child, the shim's script path alone would be the
+# only evidence and the interpreter rule above would hand the verdict back to a
+# retained marker; this case is what fails when that happens.
+test_native_child_of_an_interpreter_shim_decides_at_comm_strength() {
+  local dir node native probe entry got
+  dir="$TMP_ROOT/shim-topology"
+  node=$(named_bin "$dir" node)
+  native=$(named_bin "$dir/vendor" codex)
+
+  # The probe forks so the command substitution's child is what asks, exactly as
+  # a tool subprocess of a real harness would.
+  probe="$dir/probe.sh"
+  cat > "$probe" <<'SH'
+r=$("$FM_TEST_HARNESS" "$@")
+printf '%s' "$r"
+SH
+  # The shim EXECS its native binary, so the node process is replaced in place
+  # only for the shim's own name; the native binary is what the walk meets first.
+  entry="$dir/codex-cli-entry.sh"
+  cat > "$entry" <<'SH'
+exec "$FM_TEST_NATIVE" "$FM_TEST_PROBE" "$@"
+SH
+
+  run_shim() {  # [ancestry]
+    env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+      -u CURSOR_AGENT -u CURSOR_INVOKED_AS "$@" \
+      FM_TEST_HARNESS="$HARNESS" FM_TEST_NATIVE="$native" FM_TEST_PROBE="$probe" \
+      "$node" "$entry"
+  }
+
+  got=$(run_shim)
+  [ "$got" = codex ] \
+    || fail "the shim topology without a marker resolved '$got', expected codex"
+
+  got=$(env CLAUDECODE=1 FM_TEST_HARNESS="$HARNESS" FM_TEST_NATIVE="$native" \
+    FM_TEST_PROBE="$probe" "$node" "$entry")
+  [ "$got" = codex ] \
+    || fail "the real Codex shim topology with a retained CLAUDECODE resolved '$got', expected codex"
+
+  got=$(env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    -u CURSOR_AGENT -u CURSOR_INVOKED_AS \
+    FM_TEST_HARNESS="$HARNESS" FM_TEST_NATIVE="$native" FM_TEST_PROBE="$probe" \
+    "$node" "$entry" ancestry)
+  [ "$got" = "comm codex" ] \
+    || fail "the native child must decide at comm strength, got '$got'"
+  pass "a native harness binary under an interpreter shim decides at comm strength"
+}
+
+# --- 5. Session start's supervision protocol follows the corrected verdict ---
+
+# The consequence the captain actually hit: the wrong verdict emitted Claude's
+# Stop-owned protocol to a Codex primary, so every turn end was blocked for
+# missing Claude recovery.
+test_supervision_protocol_follows_corrected_verdict() {
+  local dir home fakebin bin got
+  dir="$TMP_ROOT/supervision"
+  home="$dir/home"
+  mkdir -p "$home/state" "$home/config"
+  bin=$(named_bin "$dir/codex-tree" codex)
+  fakebin=$(blind_ancestry_bin "$dir/blind")
+
+  got=$(env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDECODE=1 FM_HOME="$home" \
+    PATH="$fakebin:$BASE_PATH" "$RENDER")
+  assert_contains "$got" "primary harness: claude" \
+    "with ancestry blinded, the retained marker must still render claude (the case is otherwise vacuous)"
+
+  got=$(env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDECODE=1 FM_HOME="$home" \
+    "$bin" -c "r=\$(\"$RENDER\"); printf '%s' \"\$r\"")
+  assert_contains "$got" "primary harness: codex" \
+    "a Codex primary carrying a retained CLAUDECODE did not render the Codex protocol"
+  assert_contains "$got" "Mode: Codex foreground checkpoint." \
+    "the rendered block is not Codex's foreground-checkpoint protocol"
+  assert_not_contains "$got" "Mode: Claude Stop-hook-owned supervision." \
+    "the rendered block still carries Claude's Stop-owned protocol"
+  pass "session start renders the Codex protocol for a Codex primary holding a retained CLAUDECODE"
+}
+
+test_markerless_ancestry_outranks_foreign_marker
+test_genuine_marker_and_ancestry_agree
+test_cursor_ordering_still_decides_when_ancestry_is_silent
+test_retained_cursor_marker_does_not_rename_a_nested_claude
+test_pi_signed_survives_agreeing_ancestry
+test_interpreter_args_match_does_not_outrank_a_marker
+test_native_child_of_an_interpreter_shim_decides_at_comm_strength
+test_supervision_protocol_follows_corrected_verdict
