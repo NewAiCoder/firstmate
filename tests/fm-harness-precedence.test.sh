@@ -363,7 +363,83 @@ test_harness_at_namespace_pid1_is_examined() {
   pass "a harness that is pid 1 of its own namespace is examined, not skipped"
 }
 
-# --- 6. Session start's supervision protocol follows the corrected verdict ---
+# --- 6. The vantage point a probe asks from decides what strength it can see --
+
+# The shipped guarantee is a strength claim, not just an identity one: detect_own
+# hands an args-strength verdict back to a retained marker, so a harness is only
+# protected where the walk reaches it at comm strength. Which strength is even
+# REACHABLE depends on where the question is asked from. Under an interpreter
+# shim the top of the session is the shim, whose own script path is args
+# strength, while the native binary that carries comm strength is its CHILD.
+# firstmate's own detect_own always runs from a tool subprocess below that child,
+# so it sees comm; a guard that probed only the top of a real session would
+# observe args, pass, and never notice a vendor release that stopped spawning the
+# native child at all. `ancestry-subtree` is what lets a probe ask from the same
+# vantage a real session occupies, and this case pins that it reaches strictly
+# further than the top-of-session probe does.
+test_subtree_probe_reaches_a_strength_the_top_of_session_cannot() {
+  local dir node native hold entry ready shim_pid got waited
+  dir="$TMP_ROOT/subtree-vantage"
+  node=$(named_bin "$dir" node)
+  native=$(named_bin "$dir/vendor" codex)
+  ready="$dir/ready"
+
+  # The native binary parks until the test releases it, so the whole topology is
+  # still standing while the probes run.
+  hold="$dir/hold.sh"
+  cat > "$hold" <<'SH'
+touch "$FM_TEST_READY"
+while [ -e "$FM_TEST_READY" ]; do sleep 0.05; done
+SH
+  # The shim spawns its native binary and waits, so the node process stays alive
+  # ABOVE it exactly as the real Codex npm shim does.
+  entry="$dir/codex-cli-entry.sh"
+  cat > "$entry" <<'SH'
+"$FM_TEST_NATIVE" "$FM_TEST_HOLD" &
+wait "$!"
+SH
+
+  env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    -u CURSOR_AGENT -u CURSOR_INVOKED_AS \
+    FM_TEST_NATIVE="$native" FM_TEST_HOLD="$hold" FM_TEST_READY="$ready" \
+    "$node" "$entry" &
+  shim_pid=$!
+
+  waited=0
+  while [ ! -e "$ready" ] && [ "$waited" -lt 200 ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  [ -e "$ready" ] || { rm -f "$ready"; kill "$shim_pid" 2>/dev/null; fail "the shim fixture never reached its native child"; }
+
+  # Non-vacuity: the top-of-session vantage really is limited to args strength
+  # here, which is the whole reason the subtree probe has something to add.
+  got=$("$HARNESS" ancestry "$shim_pid")
+  [ "$got" = "args codex" ] \
+    || fail "the shim's own vantage should see only 'args codex', got '$got'; the subtree case proves nothing if the top of the session already reaches comm strength"
+
+  got=$("$HARNESS" ancestry-subtree "$shim_pid")
+  case "$got" in
+    *"comm codex"*) ;;
+    *) fail "the subtree probe did not reach the native child at comm strength, got '$got'" ;;
+  esac
+
+  # No vantage point inside the session may name a DIFFERENT harness, or a guard
+  # built on this probe would accept a tree it should have rejected.
+  while read -r strength named; do
+    [ -n "$strength" ] || continue
+    [ "$named" = codex ] \
+      || fail "a vantage point inside the codex fixture reported '$strength $named'"
+  done <<EOF
+$got
+EOF
+
+  rm -f "$ready"
+  wait "$shim_pid" 2>/dev/null || true
+  pass "the subtree probe reaches comm strength where the top-of-session probe sees only args"
+}
+
+# --- 7. Session start's supervision protocol follows the corrected verdict ---
 
 # The consequence the captain actually hit: the wrong verdict emitted Claude's
 # Stop-owned protocol to a Codex primary, so every turn end was blocked for
@@ -402,4 +478,5 @@ test_pi_signed_survives_agreeing_ancestry
 test_interpreter_args_match_does_not_outrank_a_marker
 test_native_child_of_an_interpreter_shim_decides_at_comm_strength
 test_harness_at_namespace_pid1_is_examined
+test_subtree_probe_reaches_a_strength_the_top_of_session_cannot
 test_supervision_protocol_follows_corrected_verdict

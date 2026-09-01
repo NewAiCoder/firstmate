@@ -27,8 +27,9 @@ ok - an agreeing marker keeps Pi's finer identity that ancestry cannot prove
 ok - an interpreter script-path match answers alone but never outranks a marker
 ok - a native harness binary under an interpreter shim decides at comm strength
 ok - a harness that is pid 1 of its own namespace is examined, not skipped
+ok - the subtree probe reaches comm strength where the top-of-session probe sees only args
 ok - session start renders the Codex protocol for a Codex primary holding a retained CLAUDECODE
-FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=2176
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=3254
 ```
 
 Before that boundary existed, a Codex session started from an environment that had retained `CLAUDECODE=1` reported `claude`, and session start emitted Claude's Stop-owned supervision protocol to a Codex primary.
@@ -78,22 +79,23 @@ The detection half of the opt-in drift guard asks the ancestry walk what it make
 FM_HARNESS_LIVENESS_DRIFT=1 bin/fm-test-run.sh tests/fm-harness-liveness-drift-live-e2e.test.sh
 ```
 
+The guard probes the pane process and every descendant of it, and reports each distinct verdict that vantage set produces.
 Observed on 2026-09-01 for the harnesses installed on that machine:
 
 ```text
 # claude 2.1.257 (Claude Code): title='claude' foreground=[claude ]
-# claude 2.1.257 (Claude Code): ancestry='comm claude'
-# claude 2.1.257 (Claude Code): subprocess-vantage ancestry='comm claude' (pid 3971650)
+# claude 2.1.257 (Claude Code): ancestry verdicts=[comm claude]
 # codex codex-cli 0.152.0: title='node' foreground=[node codex ]
-# codex codex-cli 0.152.0: ancestry='args codex'
-# codex codex-cli 0.152.0: subprocess-vantage ancestry='comm codex' (pid 3972581)
+# codex codex-cli 0.152.0: ancestry verdicts=[args codex;comm codex]
 ```
 
-Codex ships as a `node` npm shim that spawns its native `codex` binary as a foreground child, so the pane process itself is identified from its script path while a tool subprocess reaches the native process name directly.
-The guard therefore probes twice: from the pane process, where identity alone is the guarantee, and from the deepest foreground descendant, which is the vantage firstmate's own detection actually has because it always runs from a process the harness spawned.
-Strength is asserted at that second vantage and only there, because `detect_own` hands the verdict back to a retained foreign marker whenever ancestry is args-strength, so a release that stopped exposing a native process name below its launcher would silently reopen the misidentification this branch fixed.
-A single-process harness has no descendant, and the pane process is then that vantage, which is why `claude` reports `comm claude` from both.
-The portable regression pins the same two-process topology: the fix for a retained marker depends on the native child being what a tool subprocess meets first.
+Codex ships as a `node` npm shim that spawns its native `codex` binary as a foreground child, which is why its two verdicts differ: the pane process is identified only from the shim's script path, and the native child is what carries the process name.
+That difference is the reason the guard cannot probe the pane process alone.
+The guarantee this branch ships is a strength claim, not only an identity one, because `detect_own` hands an args-strength verdict straight back to a retained foreign marker.
+A pane-only probe would have observed `args codex`, passed, and gone on passing if a later release stopped spawning the native child, while real sessions silently regressed to the original bug.
+Probing the descendants asks the question from the vantage a tool subprocess actually occupies, so the guard can require comm strength somewhere in the session and require every vantage to name the same harness.
+A single-process harness has no descendant that adds a distinct verdict, which is why `claude` reports one.
+The portable regression pins both halves without any harness installed: `tests/fm-harness-precedence.test.sh` asserts that this two-process topology decides at comm strength, and that the subtree probe reaches a strength the top-of-session probe cannot.
 The run did not reach `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, or `muse`, which were not installed, and stopped at a pre-existing liveness failure for `cursor` 3.18.9, whose resolved binary on that machine is the editor rather than `cursor-agent`; those adapters are unverified by this run.
 
 ## tmux

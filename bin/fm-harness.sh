@@ -19,6 +19,15 @@
 #                                        Ancestry evidence only, with no marker layer, so
 #                                        a real harness process can be asked what the walk
 #                                        makes of it (tests/fm-harness-liveness-drift-live-e2e.test.sh).
+#        fm-harness.sh ancestry-subtree [<pid>]
+#                                        print each DISTINCT "<strength> <harness>" the walk
+#                                        reaches from <pid> or any of its descendants, one
+#                                        per line, breadth first. Same evidence-only purpose
+#                                        as `ancestry`, asked from the vantage point a tool
+#                                        subprocess actually occupies rather than from the
+#                                        top of the session, which is the only place a
+#                                        harness behind an interpreter shim can be seen at
+#                                        comm strength.
 # config/secondmate-harness format: a single line "<harness> [<model>] [<effort>]",
 # whitespace-separated. A bare "<harness>" (today's format) behaves exactly as before:
 # harness only, no model/effort. Only the first non-empty, non-comment line is parsed.
@@ -147,6 +156,56 @@ harness_ancestry() {  # [<pid>]
   return 0
 }
 
+# Print every pid in the process subtree rooted at <pid>, breadth first, starting
+# with <pid> itself. Bounded to the same eight levels harness_ancestry climbs, so
+# a deep or pathological tree cannot make this walk unbounded.
+process_subtree() {  # <pid>
+  local root=${1:-$$} pairs frontier next pid child parent depth=0
+  case "$root" in '' | *[!0-9]*) return 0 ;; esac
+  printf '%s\n' "$root"
+  pairs=$(ps -eo pid=,ppid= 2>/dev/null) || return 0
+  frontier=$root
+  while [ -n "$frontier" ] && [ "$depth" -lt 8 ]; do
+    next=
+    for pid in $frontier; do
+      while read -r child parent; do
+        [ "$parent" = "$pid" ] || continue
+        [ "$child" != "$pid" ] || continue
+        printf '%s\n' "$child"
+        next="$next $child"
+      done <<EOF
+$pairs
+EOF
+    done
+    frontier=$next
+    depth=$((depth + 1))
+  done
+}
+
+# Print each DISTINCT "<strength> <harness>" verdict harness_ancestry reaches from
+# <pid> or any of its descendants, one per line, in breadth-first order.
+#
+# Why the subtree and not <pid> alone: detect_own always runs from a TOOL
+# SUBPROCESS inside a session, never from the process at the top of it, and that
+# difference decides whether a retained foreign marker can rename the session. A
+# harness that ships as an interpreter shim spawning its native binary as a CHILD
+# is only args strength when asked from the shim, and detect_own hands an
+# args-strength verdict straight back to the marker; the native child is comm
+# strength and outranks it. Asking the subtree is what puts the question at the
+# vantage point a real session uses, so a guard built on this can assert the
+# strength the shipped guarantee actually depends on
+# (tests/fm-harness-liveness-drift-live-e2e.test.sh).
+harness_ancestry_subtree() {  # [<pid>]
+  local pid verdict seen=
+  for pid in $(process_subtree "${1:-$$}"); do
+    verdict=$(harness_ancestry "$pid")
+    [ -n "$verdict" ] || continue
+    case "$seen" in *"|$verdict|"*) continue ;; esac
+    seen="$seen|$verdict|"
+    printf '%s\n' "$verdict"
+  done
+}
+
 # Collapse a verdict to the harness FAMILY its evidence can actually prove, so a
 # marker's more specific verdict and ancestry's coarser one are not read as a
 # disagreement. Only Pi has two identities behind one launcher name.
@@ -267,6 +326,12 @@ case "${1:-}" in
       ''|*[!0-9]*) [ -z "${2:-}" ] || { echo "error: ancestry takes a numeric pid" >&2; exit 2; } ;;
     esac
     harness_ancestry "${2:-$$}"
+    ;;
+  ancestry-subtree)
+    case "${2:-}" in
+      ''|*[!0-9]*) [ -z "${2:-}" ] || { echo "error: ancestry-subtree takes a numeric pid" >&2; exit 2; } ;;
+    esac
+    harness_ancestry_subtree "${2:-$$}"
     ;;
   crew) resolve_crew ;;
   secondmate) resolve_secondmate ;;

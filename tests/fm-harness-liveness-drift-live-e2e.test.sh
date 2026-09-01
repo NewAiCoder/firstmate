@@ -96,34 +96,6 @@ resolve_harness_binary() {  # <harness>
   return 1
 }
 
-# The vantage a real tool subprocess has. Firstmate's detection never runs from
-# the pane process itself: it runs from a process the harness spawned, and the
-# ancestry walk climbs from there. A harness that ships as an interpreter shim
-# spawning its native binary as a foreground child is only reachable at `comm`
-# strength from BELOW that child, which is the strength the marker-versus-
-# ancestry precedence in bin/fm-harness.sh actually depends on. Descend the
-# pane's foreground process group to its deepest member and probe from there;
-# for a single-process harness that is the pane process itself.
-foreground_leaf_pid() {  # <pane-pid> <pane-tty>
-  local pid=$1 tty=${2#/dev/} table next cpid cppid cpgid ctpgid
-  table=$(LC_ALL=C ps -t "$tty" -o pid=,ppid=,pgid=,tpgid= 2>/dev/null) || table=
-  for _ in 1 2 3 4 5 6 7 8; do
-    next=
-    while read -r cpid cppid cpgid ctpgid; do
-      [ -n "$cpid" ] || continue
-      [ "$cppid" = "$pid" ] || continue
-      [ "$cpgid" = "$ctpgid" ] || continue
-      next=$cpid
-      break
-    done <<EOF
-$table
-EOF
-    [ -n "$next" ] || break
-    pid=$next
-  done
-  printf '%s\n' "$pid"
-}
-
 CHECKED=0
 SKIPPED=
 
@@ -180,32 +152,43 @@ for harness in claude codex opencode pi pi-signed grok kimi cursor muse; do
   [ "$harness" = pi-signed ] && expect_harness=pi
   pane_pid=$("$REAL_TMUX" -L "$SOCKET" display-message -p -t "$target" '#{pane_pid}' 2>/dev/null | tr -d ' ')
   [ -n "$pane_pid" ] || fail "$harness ($version): could not read the pane pid for the detection probe"
-  # From the pane process, identity alone is the guarantee: an interpreter shim
-  # is legitimately identified here at the weaker script-path strength.
-  ancestry=$("$ROOT/bin/fm-harness.sh" ancestry "$pane_pid" 2>/dev/null || true)
-  [ "${ancestry#* }" = "$expect_harness" ] || fail \
-    "DETECTION DRIFT: $harness $version is running but the ancestry walk reports '${ancestry:-nothing}', not '$expect_harness'. bin/fm-harness.sh now lets a structural ancestor outrank an environment marker, so an unmatched process name can resolve to a DIFFERENT harness further up the tree instead of merely losing a fast path. Observed process title '$title'; observed foreground process names [$comms]. Teach bin/fm-harness.sh's harness_ancestry the name this release actually reports."
+  # Probe the pane process AND its descendants, not the pane process alone. The
+  # shipped guarantee is a strength claim: detect_own hands an args-strength
+  # verdict back to a retained foreign marker, so a harness is only protected
+  # where the walk reaches it at comm strength. A harness that ships as a thin
+  # interpreter shim spawning its native binary as a CHILD is args strength from
+  # the pane process and comm strength from below that child - which is where
+  # firstmate's own detection actually runs, as a tool subprocess. Probing only
+  # the pane would therefore pass on evidence the guarantee does not rest on, and
+  # would keep passing if a release stopped spawning the native child at all.
+  # The native binary can take a moment to appear, so poll for it.
+  verdicts=
+  for _ in $(seq 1 150); do
+    verdicts=$("$ROOT/bin/fm-harness.sh" ancestry-subtree "$pane_pid" 2>/dev/null || true)
+    case "$verdicts" in *"comm $expect_harness"*) break ;; esac
+    sleep 0.2
+  done
 
-  note "$harness $version: ancestry='$ancestry'"
+  drift_context="Observed process title '$title'; observed foreground process names [$comms]; observed ancestry verdicts [$(printf '%s' "$verdicts" | tr '\n' ';')]."
 
-  # The vantage that decides the retained-marker case. Strength IS asserted here:
-  # detect_own hands the verdict back to a retained foreign marker whenever
-  # ancestry is only args-strength, so a release that stops exposing a native
-  # process name below the shim silently reopens the misidentification this
-  # branch fixed, and nothing else in the suite would see it.
-  pane_tty=$("$REAL_TMUX" -L "$SOCKET" display-message -p -t "$target" '#{pane_tty}' 2>/dev/null | tr -d ' ')
-  [ -n "$pane_tty" ] || fail "$harness ($version): could not read the pane tty for the subprocess-vantage detection probe"
-  leaf_pid=$(foreground_leaf_pid "$pane_pid" "$pane_tty")
-  [ -n "$leaf_pid" ] || fail "$harness ($version): could not locate the deepest foreground process for the subprocess-vantage detection probe"
-  leaf_ancestry=$("$ROOT/bin/fm-harness.sh" ancestry "$leaf_pid" 2>/dev/null || true)
-  [ "${leaf_ancestry#* }" = "$expect_harness" ] || fail \
-    "DETECTION DRIFT: $harness $version is running but from the vantage a real tool subprocess has (pid $leaf_pid, the deepest foreground process) the ancestry walk reports '${leaf_ancestry:-nothing}', not '$expect_harness'. Observed process title '$title'; observed foreground process names [$comms]. Teach bin/fm-harness.sh's harness_ancestry the name this release actually reports."
-  [ "${leaf_ancestry%% *}" = comm ] || fail \
-    "DETECTION DRIFT: $harness $version is identified from a tool subprocess only as '$leaf_ancestry', not at 'comm' strength. bin/fm-harness.sh's detect_own gives the verdict back to a retained foreign marker (CLAUDECODE, CURSOR_AGENT) whenever ancestry is args-strength, so a session inheriting one is renamed to that harness again. Observed process title '$title'; observed foreground process names [$comms]. This release stopped exposing a matchable process name below its launcher; teach bin/fm-harness.sh's harness_ancestry the name it reports now."
+  [ -n "$verdicts" ] || fail \
+    "DETECTION DRIFT: $harness $version is running but the ancestry walk reports nothing from the pane process or any of its children, so firstmate cannot identify this session at all. $drift_context Teach bin/fm-harness.sh's harness_ancestry the name this release actually reports."
 
-  note "$harness $version: subprocess-vantage ancestry='$leaf_ancestry' (pid $leaf_pid)"
-  pass "harness detection: $harness $version is identified by the ancestry walk"
-  pass "harness detection: $harness $version is identified at comm strength from a tool subprocess's vantage"
+  SAW_COMM=0
+  while read -r strength named; do
+    [ -n "$strength" ] || continue
+    [ "$named" = "$expect_harness" ] || fail \
+      "DETECTION DRIFT: $harness $version is running but a vantage point inside its own session resolves to '$named', not '$expect_harness'. bin/fm-harness.sh lets a structural ancestor outrank an environment marker, so an unmatched process name can resolve to a DIFFERENT harness further up the tree instead of merely losing a fast path. $drift_context Teach bin/fm-harness.sh's harness_ancestry the name this release actually reports."
+    [ "$strength" = comm ] && SAW_COMM=1
+  done <<EOF
+$verdicts
+EOF
+
+  [ "$SAW_COMM" = 1 ] || fail \
+    "DETECTION DRIFT: $harness $version is identified only at interpreter-args strength, from no vantage point in its session at comm strength. detect_own hands an args-strength verdict back to a retained foreign marker, so a stale CLAUDECODE would silently rename this session even though this guard sees the right identity. $drift_context Restore a process name bin/fm-harness.sh's harness_ancestry can match structurally, or teach it the name this release reports."
+
+  note "$harness $version: ancestry verdicts=[$(printf '%s' "$verdicts" | tr '\n' ';')]"
+  pass "harness detection: $harness $version is identified by the ancestry walk at comm strength"
   CHECKED=$((CHECKED + 1))
 done
 
