@@ -81,14 +81,19 @@ FM_HARNESS_LIVENESS_DRIFT=1 bin/fm-test-run.sh tests/fm-harness-liveness-drift-l
 Observed on 2026-09-01 for the harnesses installed on that machine:
 
 ```text
-# claude 2.1.252 (Claude Code): title='claude' foreground=[claude ]
-# claude 2.1.252 (Claude Code): ancestry='comm claude'
+# claude 2.1.257 (Claude Code): title='claude' foreground=[claude ]
+# claude 2.1.257 (Claude Code): ancestry='comm claude'
+# claude 2.1.257 (Claude Code): subprocess-vantage ancestry='comm claude' (pid 3971650)
 # codex codex-cli 0.152.0: title='node' foreground=[node codex ]
 # codex codex-cli 0.152.0: ancestry='args codex'
+# codex codex-cli 0.152.0: subprocess-vantage ancestry='comm codex' (pid 3972581)
 ```
 
 Codex ships as a `node` npm shim that spawns its native `codex` binary as a foreground child, so the pane process itself is identified from its script path while a tool subprocess reaches the native process name directly.
-That is why the guard asserts the harness identity and never the signal that carried it, and why the portable regression pins that two-process topology: the fix for a retained marker depends on the native child being what a tool subprocess meets first.
+The guard therefore probes twice: from the pane process, where identity alone is the guarantee, and from the deepest foreground descendant, which is the vantage firstmate's own detection actually has because it always runs from a process the harness spawned.
+Strength is asserted at that second vantage and only there, because `detect_own` hands the verdict back to a retained foreign marker whenever ancestry is args-strength, so a release that stopped exposing a native process name below its launcher would silently reopen the misidentification this branch fixed.
+A single-process harness has no descendant, and the pane process is then that vantage, which is why `claude` reports `comm claude` from both.
+The portable regression pins the same two-process topology: the fix for a retained marker depends on the native child being what a tool subprocess meets first.
 The run did not reach `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, or `muse`, which were not installed, and stopped at a pre-existing liveness failure for `cursor` 3.18.9, whose resolved binary on that machine is the editor rather than `cursor-agent`; those adapters are unverified by this run.
 
 ## tmux
