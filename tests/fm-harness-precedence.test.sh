@@ -251,9 +251,12 @@ SH
 exec "$FM_TEST_NATIVE" "$FM_TEST_PROBE" "$@"
 SH
 
-  run_shim() {  # [ancestry]
+  # No arguments: the two cases that vary the environment or the subcommand call
+  # the shim entry point directly below, so this helper stays the plain no-marker
+  # launch.
+  run_shim() {
     env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
-      -u CURSOR_AGENT -u CURSOR_INVOKED_AS "$@" \
+      -u CURSOR_AGENT -u CURSOR_INVOKED_AS \
       FM_TEST_HARNESS="$HARNESS" FM_TEST_NATIVE="$native" FM_TEST_PROBE="$probe" \
       "$node" "$entry"
   }
