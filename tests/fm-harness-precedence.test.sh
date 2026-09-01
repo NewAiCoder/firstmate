@@ -64,6 +64,53 @@ SH
   printf '%s\n' "$fakebin"
 }
 
+# A fake ps that models a PID NAMESPACE: every process reports bash with ppid 1,
+# and pid 1 reports whatever FM_TEST_PID1_COMM names. This is what a harness
+# looks like from inside a container or `codex sandbox`, where the harness is
+# pid 1 of its own namespace rather than a child of a shell.
+namespace_ancestry_bin() {  # <dir>
+  local fakebin
+  fakebin=$(fm_fakebin "$1")
+  cat > "$fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+pid=
+prev=
+for a in "$@"; do
+  [ "$prev" = -p ] && pid=$a
+  prev=$a
+done
+if [ "$pid" = 1 ]; then
+  comm=${FM_TEST_PID1_COMM:-init}
+  ppid=0
+else
+  comm=bash
+  ppid=1
+fi
+case "$*" in
+  *'ppid='*) printf '%s\n' "$ppid" ;;
+  *) printf '%s\n' "$comm" ;;
+esac
+SH
+  chmod +x "$fakebin/ps"
+  printf '%s\n' "$fakebin"
+}
+
+# Run the harness script under a fake ps, with the ambient markers dropped so
+# each case states its own.
+under_fake_ps() {  # <fakebin> <VAR=VAL ...> -- [harness args]
+  local fakebin=$1
+  shift
+  local -a assignments=()
+  while [ "$#" -gt 0 ] && [ "$1" != -- ]; do
+    assignments+=("$1")
+    shift
+  done
+  [ "${1:-}" = -- ] && shift
+  env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    -u CURSOR_AGENT -u CURSOR_INVOKED_AS "${assignments[@]}" \
+    PATH="$fakebin:$BASE_PATH" "$HARNESS" "$@"
+}
+
 with_blind_ancestry() {  # <fakebin> [VAR=VAL ...]
   local fakebin=$1
   shift
@@ -279,7 +326,40 @@ SH
   pass "a native harness binary under an interpreter shim decides at comm strength"
 }
 
-# --- 5. Session start's supervision protocol follows the corrected verdict ---
+# --- 5. A harness that is pid 1 of its own namespace ------------------------
+
+# The walk used to stop as soon as the NEXT pid was 1, on the assumption that
+# pid 1 is always init. Inside a PID namespace that assumption inverts: the
+# harness itself is pid 1, so the one process that proves who owns the tree was
+# never examined and a retained marker won by default. Verified against the real
+# installed Codex, which runs as pid 1 under `codex sandbox`.
+test_harness_at_namespace_pid1_is_examined() {
+  local fakebin got
+  fakebin=$(namespace_ancestry_bin "$TMP_ROOT/namespace-pid1")
+
+  # Non-vacuity, both directions: with a host-shaped pid 1 the marker is the
+  # only evidence and must still answer, so the case below cannot pass by the
+  # ancestry layer simply matching everything.
+  got=$(under_fake_ps "$fakebin" FM_TEST_PID1_COMM=init CLAUDECODE=1 --)
+  [ "$got" = claude ] \
+    || fail "a host-shaped pid 1 resolved '$got', expected claude (the marker layer is not live)"
+
+  got=$(under_fake_ps "$fakebin" FM_TEST_PID1_COMM=codex --)
+  [ "$got" = codex ] \
+    || fail "a Codex session at namespace pid 1 resolved '$got' with no marker, expected codex"
+
+  got=$(under_fake_ps "$fakebin" FM_TEST_PID1_COMM=codex CLAUDECODE=1 --)
+  [ "$got" = codex ] \
+    || fail "a Codex session at namespace pid 1 holding a retained CLAUDECODE resolved '$got', expected codex"
+
+  got=$(under_fake_ps "$fakebin" FM_TEST_PID1_COMM=codex CLAUDECODE=1 -- ancestry)
+  [ "$got" = "comm codex" ] \
+    || fail "the namespace pid 1 harness must decide at comm strength, got '$got'"
+
+  pass "a harness that is pid 1 of its own namespace is examined, not skipped"
+}
+
+# --- 6. Session start's supervision protocol follows the corrected verdict ---
 
 # The consequence the captain actually hit: the wrong verdict emitted Claude's
 # Stop-owned protocol to a Codex primary, so every turn end was blocked for
@@ -317,4 +397,5 @@ test_retained_cursor_marker_does_not_rename_a_nested_claude
 test_pi_signed_survives_agreeing_ancestry
 test_interpreter_args_match_does_not_outrank_a_marker
 test_native_child_of_an_interpreter_shim_decides_at_comm_strength
+test_harness_at_namespace_pid1_is_examined
 test_supervision_protocol_follows_corrected_verdict

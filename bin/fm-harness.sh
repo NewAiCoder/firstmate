@@ -134,9 +134,15 @@ harness_ancestry() {  # [<pid>]
         esac ;;
     esac
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
-    if [ -z "$pid" ] || [ "$pid" -le 1 ]; then
-      break
-    fi
+    # Stop only once the walk has EXAMINED the top of the chain. Inside a PID
+    # namespace the harness itself is pid 1 - a container, or the `codex sandbox`
+    # this boundary was proven in - so breaking as soon as the next pid is 1
+    # skips the one process that identifies the session and hands the verdict
+    # straight back to a retained marker. A host's real pid 1 (init, systemd,
+    # launchd) matches no harness name above, so examining it costs one ps call
+    # and can introduce no false positive.
+    case "$pid" in '' | *[!0-9]*) break ;; esac
+    [ "$pid" -ge 1 ] || break
   done
   return 0
 }
