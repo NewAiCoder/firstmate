@@ -645,7 +645,7 @@ SH
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
   assert_contains "$out" \
-    "MISSING_MANUAL: perl JSON::PP module (instructions: install the OS package - Fedora/RHEL: 'sudo dnf install perl-JSON-PP', Debian/Ubuntu: 'sudo apt install libjson-pp-perl', macOS/other: 'cpan JSON::PP'; required by bin/fm-captain-hold.sh's answer/show path)" \
+    "MISSING_MANUAL: perl JSON::PP module (instructions: install the OS package - Fedora/RHEL: 'sudo dnf install perl-JSON-PP', Debian/Ubuntu: 'sudo apt install libjson-pp-perl', macOS/other: 'cpan JSON::PP'; required by bin/fm-captain-hold.sh, bin/fm-procevent-lavish.sh, and bin/fm-procevent-extension-capture.pl)" \
     "bootstrap should report the perl JSON::PP module as missing with per-platform install instructions"
   pass "bootstrap: a missing perl JSON::PP module reports an actionable manual diagnostic"
 }

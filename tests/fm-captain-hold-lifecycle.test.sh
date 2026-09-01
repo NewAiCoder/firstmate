@@ -1167,6 +1167,33 @@ EOF
   pass "a captain call with no routed work, a verified transfer, an open decision, and an answered call all stay silent"
 }
 
+# perl's JSON::PP is packaged separately on minimal installs (hit live on a bare
+# Fedora perl), and every task-field read here decodes through it. Without the
+# up-front guard the decode returns an empty string inside a command
+# substitution and the command carries on against silently blank fields, so a
+# perl that cannot load the module must stop the run with the install hint.
+test_missing_json_decoder_fails_with_install_hint() {
+  local home out rc
+  home=$(make_home missing-json-decoder)
+  cat > "$home/fakebin/perl" <<'SH'
+#!/usr/bin/env bash
+echo "Can't locate JSON/PP.pm in @INC" >&2
+exit 2
+SH
+  chmod +x "$home/fakebin/perl"
+
+  set +e
+  out=$(run_captain "$home" diverged 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a perl without JSON::PP should fail the run, got success: $out"
+  printf '%s\n' "$out" | grep -F 'perl JSON::PP module is required' >/dev/null \
+    || fail "the failure should name the missing perl JSON::PP module: $out"
+  printf '%s\n' "$out" | grep -F "sudo dnf install perl-JSON-PP" >/dev/null \
+    || fail "the failure should carry the per-platform install hint: $out"
+  pass "a perl without JSON::PP stops the run with an actionable install hint"
+}
+
 test_uninventoried_report_decision_refuses_completion
 test_completion_gate_attests_and_transfers
 test_answer_records_and_closes
@@ -1184,3 +1211,4 @@ test_chat_channel_feeds_the_same_keyed_answer_intake
 test_origin_slug_validation_precedes_path_construction
 test_status_resolution_over_an_open_hold_is_signalled
 test_legitimate_holds_produce_no_divergence_signal
+test_missing_json_decoder_fails_with_install_hint

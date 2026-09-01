@@ -60,8 +60,8 @@
 #          tasks-axi feature probes remain a separate defense-in-depth check.
 #          perl JSON::PP is also reported as MISSING_MANUAL when `perl -MJSON::PP
 #          -e1` fails; its instructions field carries OS package commands instead
-#          of a URL, since bin/fm-captain-hold.sh's decode path needs the module
-#          installed, not a single canonical download location.
+#          of a URL, since the perl consumers need the module installed, not a single
+#          canonical download location.
 #          tasks-axi and quota-axi are required bootstrap tools (same class as
 #          lavish-axi). A compatible tasks-axi default backend is silent.
 #          quota-axi is required for the agent-owned dispatch-profile array
@@ -855,16 +855,17 @@ manual_install_url() {
   esac
 }
 
-# bin/fm-captain-hold.sh's answer/show path decodes JSON-quoted tasks-axi
-# field output through `perl -MJSON::PP`. JSON::PP ships with a full perl
+# Three surfaces decode or encode JSON through `perl -MJSON::PP`:
+# bin/fm-captain-hold.sh's answer/show path, bin/fm-procevent-lavish.sh, and
+# bin/fm-procevent-extension-capture.pl. JSON::PP ships with a full perl
 # distribution but is packaged separately on minimal installs (observed on
 # JLAP 2026-08-31: bare Fedora perl, module absent), so a home can have perl
-# and still fail mid-answer with a raw "Can't locate JSON/PP.pm" trace. This
+# and still fail mid-run with a raw "Can't locate JSON/PP.pm" trace. This
 # check is detect-only, matching the rest of bootstrap: never installs
 # without captain consent.
 perl_jsonpp_diagnostic() {
   perl -MJSON::PP -e1 >/dev/null 2>&1 && return 0
-  echo "MISSING_MANUAL: perl JSON::PP module (instructions: install the OS package - Fedora/RHEL: 'sudo dnf install perl-JSON-PP', Debian/Ubuntu: 'sudo apt install libjson-pp-perl', macOS/other: 'cpan JSON::PP'; required by bin/fm-captain-hold.sh's answer/show path)"
+  echo "MISSING_MANUAL: perl JSON::PP module (instructions: install the OS package - Fedora/RHEL: 'sudo dnf install perl-JSON-PP', Debian/Ubuntu: 'sudo apt install libjson-pp-perl', macOS/other: 'cpan JSON::PP'; required by bin/fm-captain-hold.sh, bin/fm-procevent-lavish.sh, and bin/fm-procevent-extension-capture.pl)"
 }
 
 missing_tool_diagnostic() {
