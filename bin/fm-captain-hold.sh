@@ -237,7 +237,9 @@ show_field() {  # <show-output> <field>
 # have perl and still lack the decoder every show-field read below depends on.
 # Without this guard the decode yields an empty string inside a command
 # substitution and the caller silently reads a missing field instead of
-# failing, so the module is proven once, up front, in the main shell.
+# failing, so the decoding commands prove the module once, up front, in the
+# main shell. The binding commands never decode a task field, so they stay
+# usable on a home that has not installed the module yet.
 JSONPP_INSTALL_HINT="Fedora/RHEL: 'sudo dnf install perl-JSON-PP', Debian/Ubuntu: 'sudo apt install libjson-pp-perl', macOS/other: 'cpan JSON::PP'"
 
 require_json_decoder() {
@@ -1000,20 +1002,15 @@ EOF
 }
 
 case "${1:-}" in
-  -h|--help) usage; exit 0 ;;
-  hold|answer|answers|bind|unbind|binding|complete|verify|diverged) require_json_decoder ;;
-  *) usage >&2; exit 2 ;;
-esac
-
-case "${1:-}" in
-  hold) shift; command_hold "$@" ;;
-  answer) shift; command_answer "$@" ;;
-  answers) shift; command_answers "$@" ;;
+  hold) shift; require_json_decoder; command_hold "$@" ;;
+  answer) shift; require_json_decoder; command_answer "$@" ;;
+  answers) shift; require_json_decoder; command_answers "$@" ;;
   bind) shift; command_bind "$@" ;;
   unbind) shift; command_unbind "$@" ;;
   binding) shift; command_binding "$@" ;;
-  complete) shift; command_complete "$@" ;;
-  verify) shift; command_verify "$@" ;;
-  diverged) shift; command_diverged "$@" ;;
+  complete) shift; require_json_decoder; command_complete "$@" ;;
+  verify) shift; require_json_decoder; command_verify "$@" ;;
+  diverged) shift; require_json_decoder; command_diverged "$@" ;;
+  -h|--help) usage ;;
   *) usage >&2; exit 2 ;;
 esac
