@@ -185,14 +185,7 @@ test_cursor_marker_outranks_inherited_claudecode() {
   local out fakebin base_path
   base_path=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
   fakebin=$(fm_fakebin "$TMP_ROOT/marker-ordering")
-  cat > "$fakebin/ps" <<'SH'
-#!/usr/bin/env bash
-case "$*" in
-  *'ppid='*) printf '%s\n' 1 ;;
-  *) printf '%s\n' bash ;;
-esac
-SH
-  chmod +x "$fakebin/ps"
+  fm_fake_blind_ancestry "$fakebin"
   # This is the exact hazard: cursor does NOT clear an inherited CLAUDECODE, so
   # a cursor session started by hand under a claude primary carries both markers.
   out=$(PATH="$fakebin:$base_path" CLAUDECODE=1 CURSOR_AGENT=1 "$HARNESS")
