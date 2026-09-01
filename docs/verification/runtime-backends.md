@@ -26,12 +26,49 @@ ok - a retained cursor marker does not rename a nested claude worker
 ok - an agreeing marker keeps Pi's finer identity that ancestry cannot prove
 ok - an interpreter script-path match answers alone but never outranks a marker
 ok - a native harness binary under an interpreter shim decides at comm strength
+ok - a harness that is pid 1 of its own namespace is examined, not skipped
 ok - session start renders the Codex protocol for a Codex primary holding a retained CLAUDECODE
-FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=1815
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=2176
 ```
 
 Before that boundary existed, a Codex session started from an environment that had retained `CLAUDECODE=1` reported `claude`, and session start emitted Claude's Stop-owned supervision protocol to a Codex primary.
 The same live shape, reproduced with a real process named `codex` and no installed harness, now reports `codex` with the marker present and `claude` with the marker present and ancestry blinded, which is what proves the case is not vacuous.
+
+### A real Codex session holding a retained Claude marker
+
+The portable regression builds its process tree from renamed executables, so the same guarantee is proven again against the real installed Codex.
+`codex sandbox` runs a command under the installed native binary with no model turn, inside a PID namespace where that binary is pid 1 and the command is pid 2.
+Verified on 2026-09-01 with codex-cli 0.152.0 on Linux 7.1.10, with both Claude markers retained in the launching environment:
+
+```sh
+CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli codex sandbox bash -c \
+  'cd <checkout> && bin/fm-harness.sh; bin/fm-harness.sh ancestry; bin/fm-supervision-instructions.sh'
+```
+
+Against the parent commit, with `CLAUDECODE=1` and `CLAUDE_CODE_ENTRYPOINT=cli` confirmed present in the probe's own environment and the chain reading pid 2 `bash` to pid 1 `codex`:
+
+```text
+verdict=claude
+SUPERVISION OPERATING INSTRUCTIONS - primary harness: claude
+Mode: Claude Stop-hook-owned supervision.
+```
+
+With the current boundaries in place, from the same command and the same process chain:
+
+```text
+verdict=codex
+ancestry=comm codex
+SUPERVISION OPERATING INSTRUCTIONS - primary harness: codex
+Mode: Codex foreground checkpoint.
+```
+
+Two boundaries are load-bearing here, and the marker-versus-ancestry precedence above is only the first.
+The walk also used to stop as soon as the next pid was 1, on the assumption that pid 1 is always init.
+That assumption inverts inside a PID namespace, where the harness is pid 1: the walk returned no ancestry at all, so the retained marker won by default even with precedence corrected.
+The walk now examines that top process before stopping, which costs one `ps` call and can introduce no false positive, because a host's real pid 1 (init, systemd, launchd) matches no harness name.
+The portable regression asserts both directions of that case: a host-shaped pid 1 still leaves the marker to answer, and a harness at pid 1 outranks it.
+
+Run on the host under Claude Code 2.1.252 with the same two markers set, the same probe reports `claude`, `comm claude`, and Claude's Stop-owned protocol, so the correction does not trade one misidentification for its inverse.
 
 ### Real harness process names behind the walk
 
