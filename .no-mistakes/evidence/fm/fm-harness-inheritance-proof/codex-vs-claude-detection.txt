@@ -1,0 +1,26 @@
+### Codex npm-shim topology (node shim spawns native 'codex' and waits)
+### launched with retained Claude markers: CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli
+
+--- BEFORE (parent commit debe4bf, identical fixture + markers) ---
+verdict=claude
+ancestry=claude   (note: parent commit has no `ancestry` subcommand; the arg falls through to detect_own)
+SUPERVISION OPERATING INSTRUCTIONS - primary harness: claude
+Mode: Claude Stop-hook-owned supervision.
+
+--- AFTER (branch fm/fm-harness-inheritance-proof) ---
+verdict=codex
+ancestry=comm codex
+SUPERVISION OPERATING INSTRUCTIONS - primary harness: codex
+Mode: Codex foreground checkpoint.
+
+--- NON-REGRESSION: real Claude ancestor, same markers (AFTER) ---
+verdict=claude
+ancestry=comm claude
+SUPERVISION OPERATING INSTRUCTIONS - primary harness: claude
+Mode: Claude Stop-hook-owned supervision.
+
+--- NON-REGRESSION: this live Claude Code session, no fixture (AFTER) ---
+verdict=claude
+ancestry=comm claude
+SUPERVISION OPERATING INSTRUCTIONS - primary harness: claude
+Mode: Claude Stop-hook-owned supervision.

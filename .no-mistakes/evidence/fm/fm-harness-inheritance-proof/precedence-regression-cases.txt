@@ -1,0 +1,14 @@
+FM_TEST_BEGIN 2026-09-01T18:47:37Z tests/fm-harness-precedence.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - a markerless harness keeps its identity under an inherited foreign marker
+ok - a harness that publishes a marker inside its own process tree is unchanged
+ok - with ancestry silent, the marker layer and its cursor-first ordering still decide
+ok - a retained cursor marker does not rename a nested claude worker
+ok - an agreeing marker keeps Pi's finer identity that ancestry cannot prove
+ok - an interpreter script-path match answers alone but never outranks a marker
+ok - a native harness binary under an interpreter shim decides at comm strength
+ok - a harness that is pid 1 of its own namespace is examined, not skipped
+ok - session start renders the Codex protocol for a Codex primary holding a retained CLAUDECODE
+FM_TEST_END 2026-09-01T18:47:39Z tests/fm-harness-precedence.test.sh exit=0 duration_ms=2063 gate_skip=false
+
+=== same suite run against parent commit debe4bf (bin/fm-harness.sh reverted) ===
+not ok - codex ancestry with an inherited CLAUDECODE resolved 'claude', expected codex
