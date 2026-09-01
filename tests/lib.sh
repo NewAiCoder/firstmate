@@ -179,6 +179,29 @@ SH
   done
 }
 
+# fm_fake_blind_ancestry <fakebin>
+# Blind bin/fm-harness.sh's parent-chain walk: every per-pid comm/args/ppid query
+# reports a bash ancestor terminating at pid 1, so ancestry proves nothing and the
+# marker a case sets is the only evidence left. A case that pins its harness with a
+# marker (CLAUDECODE=1 and friends) needs this, because a structural ancestor of a
+# DIFFERENT harness outranks a marker - without it, the harness the SUITE was
+# launched from decides the verdict. Every other ps query (watcher liveness, pane
+# discovery, process groups) reaches the real ps untouched.
+fm_fake_blind_ancestry() {
+  local fakebin=$1 real_ps
+  real_ps=$(command -v ps) || return 1
+  cat > "$fakebin/ps" <<SH
+#!/usr/bin/env bash
+case "\$*" in
+  *'-o comm='*) printf '%s\n' bash ;;
+  *'-o args='*) printf '%s\n' bash ;;
+  *'-o ppid='*) printf '%s\n' 1 ;;
+  *) exec "$real_ps" "\$@" ;;
+esac
+SH
+  chmod +x "$fakebin/ps"
+}
+
 # fm_fake_version_tool <fakebin> <tool> <override-env-var> <default-version>
 # The stub answers `--version` with <override-env-var> when that variable is set
 # and non-empty, and with <default-version> otherwise; every other invocation
