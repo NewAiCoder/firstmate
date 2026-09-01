@@ -6,7 +6,8 @@
 #          exits 0.
 #          Silent = all good.
 #          Lines: "MISSING: <tool> (install: <command>)",
-#                 "MISSING_MANUAL: <tool> (instructions: <url>)", "NEEDS_GH_AUTH",
+#                 "MISSING_MANUAL: <tool> (instructions: <url or commands>)",
+#                 "NEEDS_GH_AUTH",
 #                 "BACKEND_INVALID: <name> (known: <names>)",
 #                 "STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - <reason>",
 #                 "CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>",
