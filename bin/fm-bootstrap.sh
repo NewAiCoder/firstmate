@@ -58,6 +58,10 @@
 #          build below its floor reports MISSING like no-mistakes, so the operator
 #          is asked to upgrade rather than silently running an older tool.
 #          tasks-axi feature probes remain a separate defense-in-depth check.
+#          perl JSON::PP is also reported as MISSING_MANUAL when `perl -MJSON::PP
+#          -e1` fails; its instructions field carries OS package commands instead
+#          of a URL, since bin/fm-captain-hold.sh's decode path needs the module
+#          installed, not a single canonical download location.
 #          tasks-axi and quota-axi are required bootstrap tools (same class as
 #          lavish-axi). A compatible tasks-axi default backend is silent.
 #          quota-axi is required for the agent-owned dispatch-profile array
@@ -851,6 +855,18 @@ manual_install_url() {
   esac
 }
 
+# bin/fm-captain-hold.sh's answer/show path decodes JSON-quoted tasks-axi
+# field output through `perl -MJSON::PP`. JSON::PP ships with a full perl
+# distribution but is packaged separately on minimal installs (observed on
+# JLAP 2026-08-31: bare Fedora perl, module absent), so a home can have perl
+# and still fail mid-answer with a raw "Can't locate JSON/PP.pm" trace. This
+# check is detect-only, matching the rest of bootstrap: never installs
+# without captain consent.
+perl_jsonpp_diagnostic() {
+  perl -MJSON::PP -e1 >/dev/null 2>&1 && return 0
+  echo "MISSING_MANUAL: perl JSON::PP module (instructions: install the OS package - Fedora/RHEL: 'sudo dnf install perl-JSON-PP', Debian/Ubuntu: 'sudo apt install libjson-pp-perl', macOS/other: 'cpan JSON::PP'; required by bin/fm-captain-hold.sh's answer/show path)"
+}
+
 missing_tool_diagnostic() {
   local tool=$1 instructions
   if instructions=$(manual_install_url "$tool"); then
@@ -1236,6 +1252,7 @@ detect_local_tools() {
   if command -v tasks-axi >/dev/null 2>&1 && ! fm_tasks_axi_compatible; then
     echo "MISSING: tasks-axi (install: $(install_cmd tasks-axi))"
   fi
+  perl_jsonpp_diagnostic
 }
 
 detect_local_config() {
