@@ -270,14 +270,17 @@ SH
   pass "an interpreter script-path match answers alone but never outranks a marker"
 }
 
-# The real Codex install topology, pinned because the fix depends on it. codex
-# ships as a `node` npm shim that spawns its native `codex` binary as a child
-# and waits, so a tool subprocess reaches the native process name FIRST and is
-# decided at comm strength. Verified live on 2026-09-01 with codex-cli 0.152.0,
-# whose pane foreground process names were [node codex]. If a future release
-# stopped exec'ing a native child, the shim's script path alone would be the
-# only evidence and the interpreter rule above would hand the verdict back to a
-# retained marker; this case is what fails when that happens.
+# The real Codex install topology, modelled because the fix depends on it. codex
+# ships as a `node` npm shim that spawns its native `codex` binary as a child and
+# waits, so BOTH are in a tool subprocess's parent chain and the native name is
+# the nearer one. Verified live on 2026-09-01 with codex-cli 0.152.0, whose pane
+# foreground process names were [node codex]. What this case pins is that rule
+# and nothing wider: a native harness binary nearer than an interpreter decides
+# at comm strength, so the shim's own script path never gets to hand the verdict
+# back to a retained marker. The strength assertion below is what keeps that
+# non-vacuous - reaching the node shim instead would answer 'args codex'.
+# A fixture cannot notice a vendor topology change; the opt-in live drift guard
+# (tests/fm-harness-liveness-drift-live-e2e.test.sh) owns that.
 test_native_child_of_an_interpreter_shim_decides_at_comm_strength() {
   local dir node native probe entry got
   dir="$TMP_ROOT/shim-topology"
@@ -291,11 +294,12 @@ test_native_child_of_an_interpreter_shim_decides_at_comm_strength() {
 r=$("$FM_TEST_HARNESS" "$@")
 printf '%s' "$r"
 SH
-  # The shim EXECS its native binary, so the node process is replaced in place
-  # only for the shim's own name; the native binary is what the walk meets first.
+  # The shim SPAWNS its native binary and waits, so the node process stays alive
+  # above it and the walk meets the native binary first.
   entry="$dir/codex-cli-entry.sh"
   cat > "$entry" <<'SH'
-exec "$FM_TEST_NATIVE" "$FM_TEST_PROBE" "$@"
+"$FM_TEST_NATIVE" "$FM_TEST_PROBE" "$@" &
+wait "$!"
 SH
 
   # No arguments: the two cases that vary the environment or the subcommand call
