@@ -1,0 +1,22 @@
+# Stock macOS bash 3.2.57 - empty positional expansion, executed (not parse-checked)
+Container: docker bash:3.2 (bash 3.2.57(1)-release), repo mounted read-only.
+
+## 1. head 0ed3ba2 (with the ${*+$*} / ${1+"$@"} guards)
+ancestry-descent (no pid)  exit=0
+ancestry-descent 1         exit=0
+error: ancestry-descent takes numeric pids
+ancestry-descent abc       exit=2
+
+## 2. 6ae271a (BEFORE the guards) - same command, same shell
+ancestry-descent (no pid)  exit=0
+
+## 3. What bash 3.2.57 actually does with set -u and no positional parameters
+/p.sh: line 6: arr[@]: unbound variable
+$*      -> []
+"$@"  -> []
+${@:2}  -> []
+(exit=1)
+
+Conclusion: empty positional expansions are harmless on 3.2.57; only an empty
+ARRAY expansion is the unbound-variable error the repo documents. The guards
+added in 0ed3ba2 are behavior-neutral hardening, and both revisions exit 0.

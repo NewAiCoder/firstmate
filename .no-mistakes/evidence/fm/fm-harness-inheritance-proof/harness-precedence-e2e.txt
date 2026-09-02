@@ -1,0 +1,23 @@
+# Harness-inheritance precedence - end-to-end CLI transcript
+host: Linux 7.1.12-200.fc44.x86_64, bash 5.3.9(1)-release
+head: 0ed3ba2  base: debe4bf
+
+## Real process tree: a binary whose comm is 'codex' is a genuine ancestor,
+## and CLAUDECODE=1 is retained in the environment (the reported bug shape).
+
+$ CLAUDECODE=1 /tmp/fm-e2e/codex -c "<base debe4bf>/bin/fm-harness.sh; true"
+claude
+
+$ CLAUDECODE=1 /tmp/fm-e2e/codex -c "<head 0ed3ba2>/bin/fm-harness.sh; true"
+codex
+
+$ env -u CLAUDECODE /tmp/fm-e2e/codex -c "<head>/bin/fm-harness.sh; true"   # control, no marker
+codex
+
+## Sibling walks: same pid-1 ancestry defect, live check
+$ bin/fm-harness.sh ancestry-descent      # documented no-pid form
+comm claude
+exit=0
+$ bin/fm-harness.sh ancestry-descent abc  # still rejected
+error: ancestry-descent takes numeric pids
+exit=2
