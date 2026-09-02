@@ -100,31 +100,28 @@ harness_marker() {
   return 0
 }
 
-# Print "<strength> <harness>" for the NEAREST harness process in the parent
-# chain, or nothing when the walk finds none. The nearest match wins, so a
-# worker nested inside another harness resolves to its own harness. Strength
-# records how the match was made:
+# Print "<strength> <harness>" when one process identifies a harness, or nothing.
+# Strength records how the match was made:
 #   comm - the ancestor's own executable name identifies the harness. This is a
 #          structural fact about the running program, so it outranks a marker.
 #   args - a bare interpreter matched only because a harness name appears in the
 #          script path it was handed. This is the weakest inference in this file
 #          (any node process holding a harness-shaped path matches it), so it is
 #          used only when no marker is present.
-harness_ancestry() {  # [<pid>]
-  local pid=${1:-$$} comm args argv0
-  for _ in 1 2 3 4 5 6 7 8; do
-    comm=$(ps -o comm= -p "$pid" 2>/dev/null) || break
-    argv0=$(fm_cursor_argv0_for_pid "$pid" "$comm" 2>/dev/null || true)
-    if fm_cursor_process_matches "$comm" '' "$argv0"; then
-      echo "comm cursor"
-      return
-    fi
-    case "$(basename -- "$comm")" in
-      *claude*) echo "comm claude"; return ;;
-      *codex*) echo "comm codex"; return ;;
-      *opencode*) echo "comm opencode"; return ;;
-      *grok*) echo "comm grok"; return ;;
-      kimi) echo "comm kimi"; return ;;
+harness_process_verdict() {  # <pid>
+  local pid=$1 comm args argv0
+  comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 0
+  argv0=$(fm_cursor_argv0_for_pid "$pid" "$comm" 2>/dev/null || true)
+  if fm_cursor_process_matches "$comm" '' "$argv0"; then
+    echo "comm cursor"
+    return
+  fi
+  case "$(basename -- "$comm")" in
+    *claude*) echo "comm claude"; return ;;
+    *codex*) echo "comm codex"; return ;;
+    *opencode*) echo "comm opencode"; return ;;
+    *grok*) echo "comm grok"; return ;;
+    kimi) echo "comm kimi"; return ;;
       # muse's installed launcher ~/.local/bin/muse execs ~/.local/bin/muse-bin-<version>
       # (verified in the published launcher, muse 0.1.0-R708.1), so the live process
       # name carries the version and CHANGES on every auto-update. Match the stable
@@ -136,17 +133,27 @@ harness_ancestry() {  # [<pid>]
       # is why detect_own keeps a marker that agrees on the family.
       pi-signed) echo "comm pi"; return ;;
       pi) echo "comm pi"; return ;;
-      node*|python*)
-        # Bare interpreter: match the harness name in its script path.
-        args=$(ps -o args= -p "$pid" 2>/dev/null)
-        case "$args" in
-          *claude*) echo "args claude"; return ;;
-          *codex*) echo "args codex"; return ;;
-          *opencode*) echo "args opencode"; return ;;
-          *grok*) echo "args grok"; return ;;
-          *" pi "*|*/pi) echo "args pi"; return ;;
-        esac ;;
-    esac
+    node*|python*)
+      # Bare interpreter: match the harness name in its script path.
+      args=$(ps -o args= -p "$pid" 2>/dev/null)
+      case "$args" in
+        *claude*) echo "args claude"; return ;;
+        *codex*) echo "args codex"; return ;;
+        *opencode*) echo "args opencode"; return ;;
+        *grok*) echo "args grok"; return ;;
+        *" pi "*|*/pi) echo "args pi"; return ;;
+      esac ;;
+  esac
+}
+
+# Print the verdict for the NEAREST harness process in the parent chain, or
+# nothing when the walk finds none. The nearest match wins, so a worker nested
+# inside another harness resolves to its own harness.
+harness_ancestry() {  # [<pid>]
+  local pid=${1:-$$} verdict
+  for _ in 1 2 3 4 5 6 7 8; do
+    verdict=$(harness_process_verdict "$pid")
+    [ -z "$verdict" ] || { echo "$verdict"; return; }
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
     # Stop only once the walk has EXAMINED the top of the chain. Inside a PID
     # namespace the harness itself is pid 1 - a container, or the `codex sandbox`
@@ -167,8 +174,8 @@ harness_ancestry() {  # [<pid>]
 # is eligible. Bounded to the same eight levels harness_ancestry climbs, so a deep
 # or pathological tree cannot make this walk unbounded.
 process_descent_path() {  # <root> [<eligible-leaf-pid>...]
-  local root=${1:-$$} eligible any hit pairs frontier next pid child parent
-  local parents='' depth=0 best best_depth=0 hops=0
+  local root=${1:-$$} eligible any hit pairs frontier next pid child parent verdict
+  local parents='' depth=0 best best_depth=0 best_strength='' hops=0
   case "$root" in '' | *[!0-9]*) return 0 ;; esac
   shift 2>/dev/null || true
   eligible=" ${*+$*} "
@@ -193,9 +200,22 @@ process_descent_path() {  # <root> [<eligible-leaf-pid>...]
             *) hit=0 ;;
           esac
         fi
-        if [ "$hit" = 1 ] && [ $((depth + 1)) -gt "$best_depth" ]; then
-          best=$child
-          best_depth=$((depth + 1))
+        if [ "$hit" = 1 ]; then
+          verdict=$(harness_process_verdict "$child")
+          if [ $((depth + 1)) -gt "$best_depth" ]; then
+            best=$child
+            best_depth=$((depth + 1))
+            best_strength=${verdict%% *}
+          # At equal depth, prefer the leaf whose own executable reaches comm
+          # strength. Otherwise an earlier MCP interpreter carrying a foreign
+          # harness path can hide a native harness sibling purely through ps
+          # ordering. This repairs the chosen path's comm-strength guarantee;
+          # args-strength foreign verdicts remain excluded from cross-checking.
+          elif [ $((depth + 1)) -eq "$best_depth" ] \
+            && [ "$best_strength" != comm ] && [ "${verdict%% *}" = comm ]; then
+            best=$child
+            best_strength='comm'
+          fi
         fi
       done <<EOF
 $pairs

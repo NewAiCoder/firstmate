@@ -633,6 +633,88 @@ EOF
   pass "a foreign args-only verdict at the deepest vantage leaves the comm-strength identity intact"
 }
 
+# Two equally deep foreground leaves must not let ps ordering decide whether the
+# chosen path reaches comm strength. The foreign MCP interpreter is spawned first
+# in one pass and the native codex binary first in the other; both must resolve to
+# the native leaf while the single-path shape remains intact.
+test_descent_probe_prefers_comm_strength_when_deepest_leaves_tie() {
+  local order dir node native mcp_script block entry ready fifo
+  local shim_pid mcp_pid native_pid got waited
+  for order in mcp-first native-first; do
+    dir="$TMP_ROOT/descent-equal-$order"
+    node=$(named_bin "$dir" node)
+    native=$(named_bin "$dir/vendor" codex)
+    ready="$dir/ready"
+    fifo="$dir/fifo"
+    mkdir -p "$dir/.claude/mcp"
+    mkfifo "$fifo"
+
+    block="$dir/block.sh"
+    cat > "$block" <<'SH'
+read -r _ < "$FM_TEST_FIFO"
+SH
+    mcp_script="$dir/.claude/mcp/foo.js"
+    cp "$block" "$mcp_script"
+    entry="$dir/codex-cli-entry.sh"
+    cat > "$entry" <<'SH'
+if [ "$FM_TEST_ORDER" = mcp-first ]; then
+  "$FM_TEST_NODE" "$FM_TEST_MCP" &
+  printf '%s\n' "$!" > "$FM_TEST_DIR/mcp.pid"
+  "$FM_TEST_NATIVE" "$FM_TEST_BLOCK" &
+  printf '%s\n' "$!" > "$FM_TEST_DIR/native.pid"
+else
+  "$FM_TEST_NATIVE" "$FM_TEST_BLOCK" &
+  printf '%s\n' "$!" > "$FM_TEST_DIR/native.pid"
+  "$FM_TEST_NODE" "$FM_TEST_MCP" &
+  printf '%s\n' "$!" > "$FM_TEST_DIR/mcp.pid"
+fi
+touch "$FM_TEST_READY"
+wait
+SH
+
+    env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+      -u CURSOR_AGENT -u CURSOR_INVOKED_AS \
+      FM_TEST_ORDER="$order" FM_TEST_DIR="$dir" FM_TEST_NODE="$node" \
+      FM_TEST_NATIVE="$native" FM_TEST_BLOCK="$block" FM_TEST_MCP="$mcp_script" \
+      FM_TEST_READY="$ready" FM_TEST_FIFO="$fifo" "$node" "$entry" &
+    shim_pid=$!
+
+    waited=0
+    while { [ ! -e "$ready" ] || [ ! -s "$dir/mcp.pid" ] || [ ! -s "$dir/native.pid" ]; } \
+      && [ "$waited" -lt 200 ]; do
+      sleep 0.05
+      waited=$((waited + 1))
+    done
+    mcp_pid=$(cat "$dir/mcp.pid" 2>/dev/null || true)
+    native_pid=$(cat "$dir/native.pid" 2>/dev/null || true)
+    release_equal_depth_fixture() {
+      kill "$mcp_pid" "$native_pid" "$shim_pid" 2>/dev/null || true
+      wait "$shim_pid" 2>/dev/null || true
+    }
+    { [ -e "$ready" ] && [ -n "$mcp_pid" ] && [ -n "$native_pid" ]; } \
+      || { release_equal_depth_fixture; fail "the $order equal-depth fixture never reached both leaves"; }
+
+    got=$("$HARNESS" ancestry "$mcp_pid")
+    [ "$got" = "args claude" ] \
+      || { release_equal_depth_fixture; fail "the $order MCP leaf reported '$got', expected 'args claude'"; }
+    got=$("$HARNESS" ancestry "$native_pid")
+    [ "$got" = "comm codex" ] \
+      || { release_equal_depth_fixture; fail "the $order native leaf reported '$got', expected 'comm codex'"; }
+
+    got=$("$HARNESS" ancestry-descent "$shim_pid" "$mcp_pid" "$native_pid")
+    case "$got" in
+      "comm codex"*) ;;
+      *) release_equal_depth_fixture; fail "the $order equal-depth tie did not choose the comm-strength native leaf, got '$got'" ;;
+    esac
+    case "$got" in
+      *"args claude"*) release_equal_depth_fixture; fail "the $order equal-depth tie chose the foreign args-strength leaf" ;;
+    esac
+
+    release_equal_depth_fixture
+  done
+  pass "equal-depth descent ties prefer the comm-strength leaf regardless of spawn order"
+}
+
 # --- 7. Session start's supervision protocol follows the corrected verdict ---
 
 # The consequence the captain actually hit: the wrong verdict emitted Claude's
@@ -675,4 +757,5 @@ test_harness_at_namespace_pid1_is_examined
 test_descent_probe_reaches_a_strength_the_top_of_session_cannot
 test_descent_probe_ignores_a_sibling_branch_the_walk_cannot_reach
 test_descent_probe_tolerates_an_args_only_foreign_verdict_at_the_deepest_vantage
+test_descent_probe_prefers_comm_strength_when_deepest_leaves_tie
 test_supervision_protocol_follows_corrected_verdict
