@@ -1,0 +1,33 @@
+Executable interface evidence: generated ship contracts
+
+=== fm-brief.sh --mode no-mistakes ===
+Delivery contract: mode=no-mistakes
+8. Never run `gh issue close`, `gh issue reopen`, or any `gh project` command - issues close through
+   the PR body's `closes #N` on merge, and the project board is not used.
+When starting no-mistakes, make `--intent` preserve all relevant content from this brief's `# Task` section plus every later accepted Firstmate requirement, clarification, constraint, exclusion, and supersession, carrying only each requirement's current accepted form; retain direct requirements instead of substituting a diff summary, and exclude generic operational, status, delivery, and other scaffold boilerplate unless it is task-specific. Carry forward this brief's ban on `gh issue close`, `gh issue reopen`, and `gh project` commands so pipeline seats inherit it.
+
+=== fm-brief.sh --mode direct-PR ===
+Delivery contract: mode=direct-PR
+8. Never run `gh issue close`, `gh issue reopen`, or any `gh project` command - issues close through
+   the PR body's `closes #N` on merge, and the project board is not used.
+
+=== fm-brief.sh --mode local-only ===
+Delivery contract: mode=local-only
+8. Never run `gh issue close`, `gh issue reopen`, or any `gh project` command - issues close through
+   the PR body's `closes #N` on merge, and the project board is not used.
+
+=== fm-brief.sh --scout ===
+manual issue/project ban matches: 0
+
+=== fm-promote.sh --mode no-mistakes worker payload ===
+7. Never run `gh issue close`, `gh issue reopen`, or any `gh project` command - issues close through the PR body's `closes #N` on merge, and the project board is not used.
+Delivery contract: mode=no-mistakes
+
+=== fm-promote.sh --mode direct-PR worker payload ===
+7. Never run `gh issue close`, `gh issue reopen`, or any `gh project` command - issues close through the PR body's `closes #N` on merge, and the project board is not used.
+Delivery contract: mode=direct-PR
+
+=== fm-promote.sh --mode local-only worker payload ===
+7. Never run `gh issue close`, `gh issue reopen`, or any `gh project` command - issues close through the PR body's `closes #N` on merge, and the project board is not used.
+Delivery contract: mode=local-only
+
