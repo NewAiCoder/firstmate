@@ -2699,11 +2699,11 @@ META_WINDOW=$T
 [ "$BACKEND" = orca ] && META_WINDOW=$W
 SPAWN_GEN="s$(date +%s).${BASHPID:-$$}.$RANDOM"
 
-# Per-worker memory throttling (captain order 2026-09-02, JLAP freeze;
-# bin/fm-agent-memory-lib.sh header). Linux+systemd only; every other host
-# keeps the prior unwrapped launch, and MEMORY_SCOPE stays empty so the meta
-# below writes no new lines there (byte-identical default path). Slice
-# configuration is best-effort and never blocks the spawn: a host that
+# Per-worker memory throttling (captain order 2026-09-02, after a busy fleet
+# froze a host; bin/fm-agent-memory-lib.sh header). Linux+systemd only; every
+# other host keeps the prior unwrapped launch, and MEMORY_SCOPE stays empty
+# so the meta below writes no new lines there (byte-identical default path).
+# Slice configuration is best-effort and never blocks the spawn: a host that
 # cannot set the fleet-wide ceiling still gets the per-worker one.
 MEMORY_SCOPE=
 MEMORY_HIGH=

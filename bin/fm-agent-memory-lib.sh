@@ -5,8 +5,8 @@
 # endpoint, its kill cause), and bin/fm-watch.sh (report a confirmed
 # OOM-killed worker into its own status log).
 #
-# Why this exists (captain order 2026-09-02, JLAP freeze): a busy fleet's
-# worker processes have no ceiling of their own, so the kernel - not
+# Why this exists (captain order 2026-09-02, after a busy fleet froze a
+# host): worker processes have no ceiling of their own, so the kernel - not
 # discipline - is the only thing standing between a runaway agent and a
 # frozen host. The shape is throttle-then-protect, not a tight per-worker
 # cap: MemoryHigh lets the kernel reclaim aggressively above the soft line
