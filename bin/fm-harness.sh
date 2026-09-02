@@ -171,7 +171,7 @@ process_descent_path() {  # <root> [<eligible-leaf-pid>...]
   local parents='' depth=0 best best_depth=0 hops=0
   case "$root" in '' | *[!0-9]*) return 0 ;; esac
   shift 2>/dev/null || true
-  eligible=" $* "
+  eligible=" ${*+$*} "
   any=0
   [ "$#" -eq 0 ] && any=1
   pairs=$(ps -eo pid=,ppid= 2>/dev/null) || { printf '%s\n' "$root"; return 0; }
@@ -374,7 +374,7 @@ case "${1:-}" in
     ;;
   ancestry-descent)
     shift
-    for arg in "$@"; do
+    for arg in ${1+"$@"}; do
       case "$arg" in
         ''|*[!0-9]*) echo "error: ancestry-descent takes numeric pids" >&2; exit 2 ;;
       esac
