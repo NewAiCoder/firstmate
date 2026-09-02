@@ -1,0 +1,5 @@
+Scenario: Codex primary launched with retained CLAUDECODE=1
+fm-harness verdict: codex
+rendered heading: SUPERVISION OPERATING INSTRUCTIONS - primary harness: codex
+rendered mode: Mode: Codex foreground checkpoint.
+forbidden Claude protocol present: no
