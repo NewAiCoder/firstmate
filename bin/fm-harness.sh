@@ -379,7 +379,9 @@ case "${1:-}" in
         ''|*[!0-9]*) echo "error: ancestry-descent takes numeric pids" >&2; exit 2 ;;
       esac
     done
-    harness_ancestry_descent "${1:-$$}" "${@:2}"
+    descent_pid="${1:-$$}"
+    [ "$#" -eq 0 ] || shift
+    harness_ancestry_descent "$descent_pid" ${1+"$@"}
     ;;
   crew) resolve_crew ;;
   secondmate) resolve_secondmate ;;

@@ -150,7 +150,7 @@ test_namespace_pid1_lock_holder_is_silent() {
   # Non-vacuity: inside the same namespace, with no lock at all, the hook must
   # still produce its nudge, so silence below means the owner was recognized.
   out=$(unshare -rpf --mount-proc bash -c \
-    "FM_GATE_REFUSE_BYPASS=0 FM_ROOT_OVERRIDE='$root' FM_HOME='$root' '$NUDGE'") || status=$?
+    "FM_GATE_REFUSE_BYPASS=0 FM_ROOT_OVERRIDE='$root' FM_HOME='$root' '$NUDGE'; exit \$?") || status=$?
   expect_code 0 "$status" "namespace nudge without a lock"
   [ "$out" = "$NUDGE_LINE" ] \
     || fail "the namespace fixture did not nudge without a lock, so its silence proves nothing: $out"
@@ -158,7 +158,7 @@ test_namespace_pid1_lock_holder_is_silent() {
   printf '1\n' > "$root/state/.lock"
   status=0
   out=$(unshare -rpf --mount-proc bash -c \
-    "FM_GATE_REFUSE_BYPASS=0 FM_ROOT_OVERRIDE='$root' FM_HOME='$root' '$NUDGE'") || status=$?
+    "FM_GATE_REFUSE_BYPASS=0 FM_ROOT_OVERRIDE='$root' FM_HOME='$root' '$NUDGE'; exit \$?") || status=$?
   expect_code 0 "$status" "namespace pid 1 lock nudge"
   [ -z "$out" ] \
     || fail "a lock held by the harness at namespace pid 1 was not recognized, got: $out"
