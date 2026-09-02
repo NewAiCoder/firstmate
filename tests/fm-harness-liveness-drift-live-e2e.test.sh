@@ -164,13 +164,22 @@ for harness in claude codex opencode pi pi-signed grok kimi cursor muse; do
   #
   # The vantage set is the UPWARD path from the deepest foreground descendant, not
   # every descendant in the subtree, because harness_ancestry only ever climbs: a
-  # sibling branch is a vantage firstmate's own detection can never occupy. A
+  # sibling branch is a vantage firstmate's own detection can never occupy.
+  # Restricting the deepest descendant to the pane tty's foreground process group
+  # keeps a process left running in the background out of the selection as well.
+  #
+  # The reject-other-harness cross-check below judges COMM-strength vantages only.
+  # An args-strength verdict is path-ambiguous by construction: harness_ancestry's
+  # bare-interpreter branch matches a harness name anywhere in the script path, so a
   # harness-spawned MCP server running as `node <home>/.claude/mcp/<server>.js`
-  # matches *claude* on its script path at args strength in harness_ancestry's
-  # bare-interpreter branch, and rejecting the session over it would fail this
-  # guard for a topology no real tool subprocess can see. Restricting the deepest
-  # descendant to the pane tty's foreground process group keeps a process left
-  # running in the background out of the selection as well.
+  # answers `args claude` purely from the .claude path component, and such a server
+  # is normally a child of the agent binary rather than a sibling of it, so it can
+  # be the deepest descendant and sit ON this path. That ambiguity is the sole source
+  # of the false failure; a comm-strength verdict carries the real process name and
+  # cannot be produced that way. The comm-strength REQUIREMENT is unchanged - some
+  # vantage on the path must still name the expected harness at comm strength,
+  # because detect_own hands an args-strength verdict straight back to a retained
+  # foreign marker.
   # The native binary can take a moment to appear, so poll for it.
   pane_tty=$("$REAL_TMUX" -L "$SOCKET" display-message -p -t "$target" '#{pane_tty}' 2>/dev/null | tr -d ' ')
   verdicts=
@@ -198,9 +207,10 @@ for harness in claude codex opencode pi pi-signed grok kimi cursor muse; do
   SAW_COMM=0
   while read -r strength named; do
     [ -n "$strength" ] || continue
+    [ "$strength" = comm ] || continue
     [ "$named" = "$expect_harness" ] || fail \
-      "DETECTION DRIFT: $harness $version is running but a vantage point on the upward path through its own session resolves to '$named', not '$expect_harness'. bin/fm-harness.sh lets a structural ancestor outrank an environment marker, so an unmatched process name can resolve to a DIFFERENT harness further up the tree instead of merely losing a fast path. $drift_context Teach bin/fm-harness.sh's harness_ancestry the name this release actually reports."
-    [ "$strength" = comm ] && SAW_COMM=1
+      "DETECTION DRIFT: $harness $version is running but a comm-strength vantage point on the upward path through its own session resolves to '$named', not '$expect_harness'. bin/fm-harness.sh lets a structural ancestor outrank an environment marker, so an unmatched process name can resolve to a DIFFERENT harness further up the tree instead of merely losing a fast path. $drift_context Teach bin/fm-harness.sh's harness_ancestry the name this release actually reports."
+    SAW_COMM=1
   done <<EOF
 $verdicts
 EOF

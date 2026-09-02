@@ -535,6 +535,104 @@ EOF
   pass "the descent probe reports no verdict from a sibling branch detection cannot reach"
 }
 
+# The deeper shape the case above cannot reach, and the reason the live guard's
+# reject-other-harness cross-check judges COMM-strength vantages only. A harness
+# spawns its MCP servers from the AGENT BINARY, not from the npm shim, so the real
+# Codex topology is shim -> native codex -> mcp server: the server inherits its
+# parent's process group, passes the foreground filter, and is the deepest eligible
+# descendant, which puts its own `args claude` vantage ON the descent path rather
+# than off it. An args-strength verdict is path-ambiguous by construction - the
+# bare-interpreter branch of the walk matches a harness name anywhere in the script
+# path - so it is the comm-strength verdicts that carry a real process name and are
+# the ones worth cross-checking. This case pins that the path still reaches
+# `comm codex`, that every comm-strength vantage on it names codex, and that an
+# `args claude` vantage really is present, which is what a cross-check applied to
+# args strength would have rejected.
+test_descent_probe_tolerates_an_args_only_foreign_verdict_at_the_deepest_vantage() {
+  local dir node native mcp_script hold entry ready fifo
+  local shim_pid mcp_pid got waited saw_comm
+  dir="$TMP_ROOT/descent-deep-mcp"
+  node=$(named_bin "$dir" node)
+  native=$(named_bin "$dir/vendor" codex)
+  ready="$dir/ready"
+  fifo="$dir/fifo"
+  mkdir -p "$dir/.claude/mcp"
+  mkfifo "$fifo"
+
+  mcp_script="$dir/.claude/mcp/foo.js"
+  cat > "$mcp_script" <<'SH'
+read -r _ < "$FM_TEST_FIFO"
+SH
+
+  # The native binary is what starts the MCP server, so the server sits BELOW it and
+  # is the deepest descendant of the whole tree.
+  hold="$dir/hold.sh"
+  cat > "$hold" <<'SH'
+"$FM_TEST_NODE" "$FM_TEST_MCP" &
+printf '%s\n' "$!" > "$FM_TEST_DIR/mcp.pid"
+touch "$FM_TEST_READY"
+wait
+SH
+  entry="$dir/codex-cli-entry.sh"
+  cat > "$entry" <<'SH'
+"$FM_TEST_NATIVE" "$FM_TEST_HOLD" &
+printf '%s\n' "$!" > "$FM_TEST_DIR/native.pid"
+wait
+SH
+
+  env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    -u CURSOR_AGENT -u CURSOR_INVOKED_AS \
+    FM_TEST_DIR="$dir" FM_TEST_NODE="$node" FM_TEST_NATIVE="$native" \
+    FM_TEST_HOLD="$hold" FM_TEST_MCP="$mcp_script" FM_TEST_READY="$ready" \
+    FM_TEST_FIFO="$fifo" \
+    "$node" "$entry" &
+  shim_pid=$!
+
+  waited=0
+  while { [ ! -e "$ready" ] || [ ! -s "$dir/mcp.pid" ]; } && [ "$waited" -lt 200 ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  release_deep_mcp_fixture() {
+    kill "$(cat "$dir/mcp.pid" 2>/dev/null)" "$(cat "$dir/native.pid" 2>/dev/null)" \
+      "$shim_pid" 2>/dev/null || true
+    wait "$shim_pid" 2>/dev/null || true
+  }
+  { [ -e "$ready" ] && [ -s "$dir/mcp.pid" ]; } \
+    || { release_deep_mcp_fixture; fail "the deep MCP fixture never reached its server process"; }
+  mcp_pid=$(cat "$dir/mcp.pid")
+
+  got=$("$HARNESS" ancestry "$mcp_pid")
+  [ "$got" = "args claude" ] \
+    || { release_deep_mcp_fixture; fail "the MCP server reported '$got', expected 'args claude'; this case proves nothing unless the deepest vantage really answers a foreign harness"; }
+
+  got=$("$HARNESS" ancestry-descent "$shim_pid")
+  case "$got" in
+    *"args claude"*) ;;
+    *) release_deep_mcp_fixture; fail "the descent path did not include the MCP server's foreign args verdict, got '$got'; a cross-check restricted to comm strength is untested unless that vantage is on the path" ;;
+  esac
+  case "$got" in
+    *"comm codex"*) ;;
+    *) release_deep_mcp_fixture; fail "the descent probe did not reach the native binary at comm strength, got '$got'" ;;
+  esac
+
+  saw_comm=0
+  while read -r strength named; do
+    [ -n "$strength" ] || continue
+    [ "$strength" = comm ] || continue
+    [ "$named" = codex ] \
+      || { release_deep_mcp_fixture; fail "a comm-strength vantage on the descent path reported '$named', expected codex"; }
+    saw_comm=1
+  done <<EOF
+$got
+EOF
+  [ "$saw_comm" = 1 ] \
+    || { release_deep_mcp_fixture; fail "no comm-strength vantage on the descent path, so the guard's strength requirement would reject this tree"; }
+
+  release_deep_mcp_fixture
+  pass "a foreign args-only verdict at the deepest vantage leaves the comm-strength identity intact"
+}
+
 # --- 7. Session start's supervision protocol follows the corrected verdict ---
 
 # The consequence the captain actually hit: the wrong verdict emitted Claude's
@@ -576,4 +674,5 @@ test_native_child_of_an_interpreter_shim_decides_at_comm_strength
 test_harness_at_namespace_pid1_is_examined
 test_descent_probe_reaches_a_strength_the_top_of_session_cannot
 test_descent_probe_ignores_a_sibling_branch_the_walk_cannot_reach
+test_descent_probe_tolerates_an_args_only_foreign_verdict_at_the_deepest_vantage
 test_supervision_protocol_follows_corrected_verdict

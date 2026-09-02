@@ -10,7 +10,7 @@ Exact task chronology, branch names, temporary homes, local paths, process ids, 
 
 Firstmate's own harness comes from two kinds of evidence, and `bin/fm-harness.sh` owns how they combine: an environment marker names its harness, and the nearest harness process in the parent chain proves who owns the process tree.
 A marker alone is not proof of ownership, because it is ordinary environment state that a child inherits and a terminal multiplexer can replay into an unrelated session.
-Verified on 2026-09-01 on Linux 7.1.10 with the portable regression, which builds every case from real renamed processes and no installed harness:
+Verified on 2026-09-02 on Linux 7.1.12 with the portable regression, which builds every case from real renamed processes and no installed harness:
 
 ```sh
 bin/fm-test-run.sh tests/fm-harness-precedence.test.sh
@@ -29,8 +29,9 @@ ok - a native harness binary under an interpreter shim decides at comm strength
 ok - a harness that is pid 1 of its own namespace is examined, not skipped
 ok - the descent probe reaches comm strength where the top-of-session probe sees only args
 ok - the descent probe reports no verdict from a sibling branch detection cannot reach
+ok - a foreign args-only verdict at the deepest vantage leaves the comm-strength identity intact
 ok - session start renders the Codex protocol for a Codex primary holding a retained CLAUDECODE
-FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=3254
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=3666
 ```
 
 Before that boundary existed, a Codex session started from an environment that had retained `CLAUDECODE=1` reported `claude`, and session start emitted Claude's Stop-owned supervision protocol to a Codex primary.
@@ -81,25 +82,28 @@ FM_HARNESS_LIVENESS_DRIFT=1 bin/fm-test-run.sh tests/fm-harness-liveness-drift-l
 ```
 
 The guard probes the upward path between the deepest foreground descendant of the pane process and the pane process itself, and reports each distinct verdict that vantage set produces.
-Observed on 2026-09-01 for the harnesses installed on that machine:
+Observed on 2026-09-02 for the harnesses installed on that machine:
 
 ```text
-# claude 2.1.257 (Claude Code): title='claude' foreground=[claude ]
-# claude 2.1.257 (Claude Code): ancestry verdicts=[comm claude]
+# claude 2.1.258 (Claude Code): title='claude' foreground=[claude ]
+# claude 2.1.258 (Claude Code): ancestry verdicts=[comm claude]
 # codex codex-cli 0.152.0: title='node' foreground=[node codex ]
-# codex codex-cli 0.152.0: ancestry verdicts=[args codex;comm codex]
+# codex codex-cli 0.152.0: ancestry verdicts=[comm codex;args codex]
 ```
+
+The verdicts are reported deepest first, so Codex's native child answers before the shim above it.
 
 Codex ships as a `node` npm shim that spawns its native `codex` binary as a foreground child, which is why its two verdicts differ: the pane process is identified only from the shim's script path, and the native child is what carries the process name.
 That difference is the reason the guard cannot probe the pane process alone.
 The guarantee this branch ships is a strength claim, not only an identity one, because `detect_own` hands an args-strength verdict straight back to a retained foreign marker.
 A pane-only probe would have observed `args codex`, passed, and gone on passing if a later release stopped spawning the native child, while real sessions silently regressed to the original bug.
-Probing from below asks the question from the vantage a tool subprocess actually occupies, so the guard can require comm strength somewhere in the session and require every vantage to name the same harness.
+Probing from below asks the question from the vantage a tool subprocess actually occupies, so the guard can require comm strength somewhere in the session and require every comm-strength vantage to name the same harness.
 The vantage set stops at the upward path rather than the whole subtree, because `harness_ancestry` only ever climbs and a sibling branch is therefore a vantage firstmate's own detection can never occupy.
-A harness-spawned MCP server running as `node <home>/.claude/mcp/<server>.js` matches `*claude*` on its script path at args strength, and rejecting a session over it would fail the guard for a topology no real tool subprocess can see.
+The reject-other-harness cross-check judges comm-strength vantages only, because an args-strength verdict is path-ambiguous by construction: a harness-spawned MCP server running as `node <home>/.claude/mcp/<server>.js` answers `args claude` purely from the `.claude` path component, and such a server is normally a child of the agent binary, so it can be the deepest descendant and sit on this path.
+The comm-strength requirement itself is unchanged, because `detect_own` hands an args-strength verdict straight back to a retained foreign marker.
 A single-process harness has no descendant that adds a distinct verdict, which is why `claude` reports one.
-The portable regression pins all three halves without any harness installed: `tests/fm-harness-precedence.test.sh` asserts that this two-process topology decides at comm strength, that the descent probe reaches a strength the top-of-session probe cannot, and that a sibling branch answering a foreign harness contributes no verdict.
-The run did not reach `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, or `muse`, which were not installed, and stopped at a pre-existing liveness failure for `cursor` 3.18.9, whose resolved binary on that machine is the editor rather than `cursor-agent`; those adapters are unverified by this run.
+The portable regression pins every half without any harness installed: `tests/fm-harness-precedence.test.sh` asserts that this two-process topology decides at comm strength, that the descent probe reaches a strength the top-of-session probe cannot, that a sibling branch answering a foreign harness contributes no verdict, and that a foreign args-only verdict at the deepest vantage leaves the comm-strength identity intact.
+The run did not reach `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, or `muse`, which were not installed, and stopped at the same pre-existing liveness failure for `cursor` 3.18.9, whose resolved binary on that machine is the editor rather than `cursor-agent`; those adapters are unverified by this run.
 
 ## tmux
 
