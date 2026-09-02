@@ -92,6 +92,7 @@ Observed on 2026-09-02 for the harnesses installed on that machine:
 ```
 
 The verdicts are reported deepest first, so Codex's native child answers before the shim above it.
+When eligible foreground descendants tie at the greatest depth, the probe prefers a leaf whose own verdict reaches comm strength; if none does, it keeps the first leaf, so process-table ordering cannot hide an equally deep native harness binary behind an args-strength interpreter.
 
 Codex ships as a `node` npm shim that spawns its native `codex` binary as a foreground child, which is why its two verdicts differ: the pane process is identified only from the shim's script path, and the native child is what carries the process name.
 That difference is the reason the guard cannot probe the pane process alone.
@@ -102,7 +103,7 @@ The vantage set stops at the upward path rather than the whole subtree, because 
 The reject-other-harness cross-check judges comm-strength vantages only, because an args-strength verdict is path-ambiguous by construction: a harness-spawned MCP server running as `node <home>/.claude/mcp/<server>.js` answers `args claude` purely from the `.claude` path component, and such a server is normally a child of the agent binary, so it can be the deepest descendant and sit on this path.
 That narrowing changes only which vantages the cross-check judges; the comm-strength requirement itself is unchanged.
 A single-process harness has no descendant that adds a distinct verdict, which is why `claude` reports one.
-The portable regression pins every half without any harness installed: `tests/fm-harness-precedence.test.sh` asserts that this two-process topology decides at comm strength, that the descent probe reaches a strength the top-of-session probe cannot, that a sibling branch answering a foreign harness contributes no verdict, and that a foreign args-only verdict at the deepest vantage leaves the comm-strength identity intact.
+The portable regression pins every half without any harness installed: `tests/fm-harness-precedence.test.sh` asserts that this two-process topology decides at comm strength, that the descent probe reaches a strength the top-of-session probe cannot, that a sibling branch answering a foreign harness contributes no verdict, that a foreign args-only verdict at the deepest vantage leaves the comm-strength identity intact, and that equal-depth ties choose the comm-strength leaf regardless of process ordering.
 The run did not reach `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, or `muse`, which were not installed, and stopped at the same pre-existing liveness failure for `cursor` 3.18.9, whose resolved binary on that machine is the editor rather than `cursor-agent`; those adapters are unverified by this run.
 
 ## tmux
