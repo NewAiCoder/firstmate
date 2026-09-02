@@ -27,7 +27,8 @@ ok - an agreeing marker keeps Pi's finer identity that ancestry cannot prove
 ok - an interpreter script-path match answers alone but never outranks a marker
 ok - a native harness binary under an interpreter shim decides at comm strength
 ok - a harness that is pid 1 of its own namespace is examined, not skipped
-ok - the subtree probe reaches comm strength where the top-of-session probe sees only args
+ok - the descent probe reaches comm strength where the top-of-session probe sees only args
+ok - the descent probe reports no verdict from a sibling branch detection cannot reach
 ok - session start renders the Codex protocol for a Codex primary holding a retained CLAUDECODE
 FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=3254
 ```
@@ -79,7 +80,7 @@ The detection half of the opt-in drift guard asks the ancestry walk what it make
 FM_HARNESS_LIVENESS_DRIFT=1 bin/fm-test-run.sh tests/fm-harness-liveness-drift-live-e2e.test.sh
 ```
 
-The guard probes the pane process and every descendant of it, and reports each distinct verdict that vantage set produces.
+The guard probes the upward path between the deepest foreground descendant of the pane process and the pane process itself, and reports each distinct verdict that vantage set produces.
 Observed on 2026-09-01 for the harnesses installed on that machine:
 
 ```text
@@ -93,9 +94,11 @@ Codex ships as a `node` npm shim that spawns its native `codex` binary as a fore
 That difference is the reason the guard cannot probe the pane process alone.
 The guarantee this branch ships is a strength claim, not only an identity one, because `detect_own` hands an args-strength verdict straight back to a retained foreign marker.
 A pane-only probe would have observed `args codex`, passed, and gone on passing if a later release stopped spawning the native child, while real sessions silently regressed to the original bug.
-Probing the descendants asks the question from the vantage a tool subprocess actually occupies, so the guard can require comm strength somewhere in the session and require every vantage to name the same harness.
+Probing from below asks the question from the vantage a tool subprocess actually occupies, so the guard can require comm strength somewhere in the session and require every vantage to name the same harness.
+The vantage set stops at the upward path rather than the whole subtree, because `harness_ancestry` only ever climbs and a sibling branch is therefore a vantage firstmate's own detection can never occupy.
+A harness-spawned MCP server running as `node <home>/.claude/mcp/<server>.js` matches `*claude*` on its script path at args strength, and rejecting a session over it would fail the guard for a topology no real tool subprocess can see.
 A single-process harness has no descendant that adds a distinct verdict, which is why `claude` reports one.
-The portable regression pins both halves without any harness installed: `tests/fm-harness-precedence.test.sh` asserts that this two-process topology decides at comm strength, and that the subtree probe reaches a strength the top-of-session probe cannot.
+The portable regression pins all three halves without any harness installed: `tests/fm-harness-precedence.test.sh` asserts that this two-process topology decides at comm strength, that the descent probe reaches a strength the top-of-session probe cannot, and that a sibling branch answering a foreign harness contributes no verdict.
 The run did not reach `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, or `muse`, which were not installed, and stopped at a pre-existing liveness failure for `cursor` 3.18.9, whose resolved binary on that machine is the editor rather than `cursor-agent`; those adapters are unverified by this run.
 
 ## tmux

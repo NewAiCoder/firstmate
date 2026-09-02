@@ -374,12 +374,12 @@ test_harness_at_namespace_pid1_is_examined() {
 # firstmate's own detect_own always runs from a tool subprocess below that child,
 # so it sees comm; a guard that probed only the top of a real session would
 # observe args, pass, and never notice a vendor release that stopped spawning the
-# native child at all. `ancestry-subtree` is what lets a probe ask from the same
+# native child at all. `ancestry-descent` is what lets a probe ask from the same
 # vantage a real session occupies, and this case pins that it reaches strictly
 # further than the top-of-session probe does.
-test_subtree_probe_reaches_a_strength_the_top_of_session_cannot() {
+test_descent_probe_reaches_a_strength_the_top_of_session_cannot() {
   local dir node native hold entry ready shim_pid got waited
-  dir="$TMP_ROOT/subtree-vantage"
+  dir="$TMP_ROOT/descent-vantage"
   node=$(named_bin "$dir" node)
   native=$(named_bin "$dir/vendor" codex)
   ready="$dir/ready"
@@ -413,15 +413,15 @@ SH
   [ -e "$ready" ] || { rm -f "$ready"; kill "$shim_pid" 2>/dev/null; fail "the shim fixture never reached its native child"; }
 
   # Non-vacuity: the top-of-session vantage really is limited to args strength
-  # here, which is the whole reason the subtree probe has something to add.
+  # here, which is the whole reason the descent probe has something to add.
   got=$("$HARNESS" ancestry "$shim_pid")
   [ "$got" = "args codex" ] \
-    || fail "the shim's own vantage should see only 'args codex', got '$got'; the subtree case proves nothing if the top of the session already reaches comm strength"
+    || fail "the shim's own vantage should see only 'args codex', got '$got'; the descent case proves nothing if the top of the session already reaches comm strength"
 
-  got=$("$HARNESS" ancestry-subtree "$shim_pid")
+  got=$("$HARNESS" ancestry-descent "$shim_pid")
   case "$got" in
     *"comm codex"*) ;;
-    *) fail "the subtree probe did not reach the native child at comm strength, got '$got'" ;;
+    *) fail "the descent probe did not reach the native child at comm strength, got '$got'" ;;
   esac
 
   # No vantage point inside the session may name a DIFFERENT harness, or a guard
@@ -436,7 +436,103 @@ EOF
 
   rm -f "$ready"
   wait "$shim_pid" 2>/dev/null || true
-  pass "the subtree probe reaches comm strength where the top-of-session probe sees only args"
+  pass "the descent probe reaches comm strength where the top-of-session probe sees only args"
+}
+
+# The other half of the vantage question: which vantages a probe must NOT ask
+# from. harness_ancestry only ever climbs, so firstmate's own detection can never
+# occupy a SIBLING branch of the process that runs it. A harness routinely spawns
+# such branches - an MCP server started as `node <home>/.claude/mcp/<server>.js`
+# matches *claude* on its script path in the bare-interpreter branch of the walk -
+# and a probe that reported every descendant would answer a foreign harness from a
+# process no real tool subprocess can ask from. The descent probe asks only the
+# vantages on the upward path from the deepest descendant, which is exactly the set
+# detection itself can reach.
+test_descent_probe_ignores_a_sibling_branch_the_walk_cannot_reach() {
+  local dir node native worker mcp_script block hold entry ready fifo
+  local shim_pid mcp_pid got waited
+  dir="$TMP_ROOT/descent-sibling"
+  node=$(named_bin "$dir" node)
+  native=$(named_bin "$dir/vendor" codex)
+  worker=$(named_bin "$dir/vendor" worker)
+  ready="$dir/ready"
+  fifo="$dir/fifo"
+  mkdir -p "$dir/.claude/mcp"
+  mkfifo "$fifo"
+
+  # Both leaves park on a fifo nothing ever writes, so they hold their position in
+  # the tree without spawning children of their own and the depths stay fixed.
+  block="$dir/block.sh"
+  cat > "$block" <<'SH'
+read -r _ < "$FM_TEST_FIFO"
+SH
+  # The MCP server is the sibling branch: a bare interpreter whose script path
+  # carries a harness name it does not belong to.
+  mcp_script="$dir/.claude/mcp/foo.js"
+  cp "$block" "$mcp_script"
+
+  # The native binary keeps a child of its own, so the deepest descendant is
+  # unambiguously on the codex branch rather than tied with the sibling.
+  hold="$dir/hold.sh"
+  cat > "$hold" <<'SH'
+"$FM_TEST_WORKER" "$FM_TEST_BLOCK" &
+printf '%s\n' "$!" > "$FM_TEST_DIR/worker.pid"
+touch "$FM_TEST_READY"
+wait
+SH
+  entry="$dir/codex-cli-entry.sh"
+  cat > "$entry" <<'SH'
+"$FM_TEST_NATIVE" "$FM_TEST_HOLD" &
+printf '%s\n' "$!" > "$FM_TEST_DIR/native.pid"
+"$FM_TEST_NODE" "$FM_TEST_MCP" &
+printf '%s\n' "$!" > "$FM_TEST_DIR/mcp.pid"
+wait
+SH
+
+  env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    -u CURSOR_AGENT -u CURSOR_INVOKED_AS \
+    FM_TEST_DIR="$dir" FM_TEST_NODE="$node" FM_TEST_NATIVE="$native" \
+    FM_TEST_WORKER="$worker" FM_TEST_HOLD="$hold" FM_TEST_BLOCK="$block" \
+    FM_TEST_MCP="$mcp_script" FM_TEST_READY="$ready" FM_TEST_FIFO="$fifo" \
+    "$node" "$entry" &
+  shim_pid=$!
+
+  waited=0
+  while { [ ! -e "$ready" ] || [ ! -s "$dir/mcp.pid" ] || [ ! -s "$dir/worker.pid" ]; } \
+    && [ "$waited" -lt 200 ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  release_sibling_fixture() {
+    kill "$(cat "$dir/worker.pid" 2>/dev/null)" "$(cat "$dir/mcp.pid" 2>/dev/null)" \
+      "$(cat "$dir/native.pid" 2>/dev/null)" "$shim_pid" 2>/dev/null || true
+    wait "$shim_pid" 2>/dev/null || true
+  }
+  { [ -e "$ready" ] && [ -s "$dir/mcp.pid" ] && [ -s "$dir/worker.pid" ]; } \
+    || { release_sibling_fixture; fail "the sibling fixture never reached both of its leaves"; }
+  mcp_pid=$(cat "$dir/mcp.pid")
+
+  # Non-vacuity: the sibling really does answer a foreign harness when asked, so a
+  # probe that reported every descendant would have reported claude here.
+  got=$("$HARNESS" ancestry "$mcp_pid")
+  [ "$got" = "args claude" ] \
+    || { release_sibling_fixture; fail "the sibling MCP process reported '$got', expected 'args claude'; this case proves nothing unless that branch really names a foreign harness"; }
+
+  got=$("$HARNESS" ancestry-descent "$shim_pid")
+  case "$got" in
+    *"comm codex"*) ;;
+    *) release_sibling_fixture; fail "the descent probe did not reach the native child at comm strength, got '$got'" ;;
+  esac
+  while read -r strength named; do
+    [ -n "$strength" ] || continue
+    [ "$named" = codex ] \
+      || { release_sibling_fixture; fail "the descent probe reported '$strength $named' from a sibling branch the ancestry walk can never climb through"; }
+  done <<EOF
+$got
+EOF
+
+  release_sibling_fixture
+  pass "the descent probe reports no verdict from a sibling branch detection cannot reach"
 }
 
 # --- 7. Session start's supervision protocol follows the corrected verdict ---
@@ -478,5 +574,6 @@ test_pi_signed_survives_agreeing_ancestry
 test_interpreter_args_match_does_not_outrank_a_marker
 test_native_child_of_an_interpreter_shim_decides_at_comm_strength
 test_harness_at_namespace_pid1_is_examined
-test_subtree_probe_reaches_a_strength_the_top_of_session_cannot
+test_descent_probe_reaches_a_strength_the_top_of_session_cannot
+test_descent_probe_ignores_a_sibling_branch_the_walk_cannot_reach
 test_supervision_protocol_follows_corrected_verdict

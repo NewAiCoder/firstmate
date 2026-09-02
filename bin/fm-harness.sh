@@ -19,15 +19,20 @@
 #                                        Ancestry evidence only, with no marker layer, so
 #                                        a real harness process can be asked what the walk
 #                                        makes of it (tests/fm-harness-liveness-drift-live-e2e.test.sh).
-#        fm-harness.sh ancestry-subtree [<pid>]
+#        fm-harness.sh ancestry-descent [<pid>] [<leaf-pid>...]
 #                                        print each DISTINCT "<strength> <harness>" the walk
-#                                        reaches from <pid> or any of its descendants, one
-#                                        per line, breadth first. Same evidence-only purpose
+#                                        reaches from the vantages on the UPWARD path
+#                                        between the deepest descendant of <pid> and <pid>
+#                                        itself, deepest first. Same evidence-only purpose
 #                                        as `ancestry`, asked from the vantage point a tool
 #                                        subprocess actually occupies rather than from the
 #                                        top of the session, which is the only place a
 #                                        harness behind an interpreter shim can be seen at
-#                                        comm strength.
+#                                        comm strength. Optional <leaf-pid> values restrict
+#                                        which descendants may be chosen as the deepest one,
+#                                        so a caller that knows the terminal's foreground
+#                                        process group can keep a backgrounded process out
+#                                        of the selection.
 # config/secondmate-harness format: a single line "<harness> [<model>] [<effort>]",
 # whitespace-separated. A bare "<harness>" (today's format) behaves exactly as before:
 # harness only, no model/effort. Only the first non-empty, non-comment line is parsed.
@@ -156,14 +161,21 @@ harness_ancestry() {  # [<pid>]
   return 0
 }
 
-# Print every pid in the process subtree rooted at <pid>, breadth first, starting
-# with <pid> itself. Bounded to the same eight levels harness_ancestry climbs, so
-# a deep or pathological tree cannot make this walk unbounded.
-process_subtree() {  # <pid>
-  local root=${1:-$$} pairs frontier next pid child parent depth=0
+# Print the pids on the UPWARD path between the deepest descendant of <root> and
+# <root> itself, deepest first. Optional <eligible-leaf-pid> values restrict which
+# descendants may be chosen as that deepest one; with none given every descendant
+# is eligible. Bounded to the same eight levels harness_ancestry climbs, so a deep
+# or pathological tree cannot make this walk unbounded.
+process_descent_path() {  # <root> [<eligible-leaf-pid>...]
+  local root=${1:-$$} eligible any hit pairs frontier next pid child parent
+  local parents='' depth=0 best best_depth=0 hops=0
   case "$root" in '' | *[!0-9]*) return 0 ;; esac
-  printf '%s\n' "$root"
-  pairs=$(ps -eo pid=,ppid= 2>/dev/null) || return 0
+  shift 2>/dev/null || true
+  eligible=" $* "
+  any=0
+  [ "$#" -eq 0 ] && any=1
+  pairs=$(ps -eo pid=,ppid= 2>/dev/null) || { printf '%s\n' "$root"; return 0; }
+  best=$root
   frontier=$root
   while [ -n "$frontier" ] && [ "$depth" -lt 8 ]; do
     next=
@@ -171,8 +183,20 @@ process_subtree() {  # <pid>
       while read -r child parent; do
         [ "$parent" = "$pid" ] || continue
         [ "$child" != "$pid" ] || continue
-        printf '%s\n' "$child"
+        parents="$parents $child:$pid"
         next="$next $child"
+        if [ "$any" = 1 ]; then
+          hit=1
+        else
+          case "$eligible" in
+            *" $child "*) hit=1 ;;
+            *) hit=0 ;;
+          esac
+        fi
+        if [ "$hit" = 1 ] && [ $((depth + 1)) -gt "$best_depth" ]; then
+          best=$child
+          best_depth=$((depth + 1))
+        fi
       done <<EOF
 $pairs
 EOF
@@ -180,24 +204,45 @@ EOF
     frontier=$next
     depth=$((depth + 1))
   done
+
+  pid=$best
+  while [ -n "$pid" ] && [ "$hops" -le 8 ]; do
+    printf '%s\n' "$pid"
+    [ "$pid" != "$root" ] || break
+    parent=
+    case "$parents" in
+      *" $pid:"*)
+        parent=${parents##*" $pid:"}
+        parent=${parent%% *} ;;
+    esac
+    pid=$parent
+    hops=$((hops + 1))
+  done
 }
 
 # Print each DISTINCT "<strength> <harness>" verdict harness_ancestry reaches from
-# <pid> or any of its descendants, one per line, in breadth-first order.
+# the vantages on the upward path between the deepest descendant of <root> and
+# <root>, one per line, deepest first.
 #
-# Why the subtree and not <pid> alone: detect_own always runs from a TOOL
+# Why a descent path and not <root> alone: detect_own always runs from a TOOL
 # SUBPROCESS inside a session, never from the process at the top of it, and that
 # difference decides whether a retained foreign marker can rename the session. A
 # harness that ships as an interpreter shim spawning its native binary as a CHILD
 # is only args strength when asked from the shim, and detect_own hands an
 # args-strength verdict straight back to the marker; the native child is comm
-# strength and outranks it. Asking the subtree is what puts the question at the
+# strength and outranks it. Asking from below is what puts the question at the
 # vantage point a real session uses, so a guard built on this can assert the
 # strength the shipped guarantee actually depends on
 # (tests/fm-harness-liveness-drift-live-e2e.test.sh).
-harness_ancestry_subtree() {  # [<pid>]
+#
+# Why the upward path and not the whole subtree: harness_ancestry only ever climbs,
+# so a SIBLING branch is a vantage firstmate's own detection can never occupy. A
+# harness-spawned MCP server running as `node <home>/.claude/mcp/<server>.js` matches
+# *claude* on its script path in the bare-interpreter branch above and would report a
+# foreign harness from a process no real tool subprocess ever asks from.
+harness_ancestry_descent() {  # <root> [<eligible-leaf-pid>...]
   local pid verdict seen=
-  for pid in $(process_subtree "${1:-$$}"); do
+  for pid in $(process_descent_path "$@"); do
     verdict=$(harness_ancestry "$pid")
     [ -n "$verdict" ] || continue
     case "$seen" in *"|$verdict|"*) continue ;; esac
@@ -327,11 +372,14 @@ case "${1:-}" in
     esac
     harness_ancestry "${2:-$$}"
     ;;
-  ancestry-subtree)
-    case "${2:-}" in
-      ''|*[!0-9]*) [ -z "${2:-}" ] || { echo "error: ancestry-subtree takes a numeric pid" >&2; exit 2; } ;;
-    esac
-    harness_ancestry_subtree "${2:-$$}"
+  ancestry-descent)
+    shift
+    for arg in "$@"; do
+      case "$arg" in
+        ''|*[!0-9]*) echo "error: ancestry-descent takes numeric pids" >&2; exit 2 ;;
+      esac
+    done
+    harness_ancestry_descent "${1:-$$}" "${@:2}"
     ;;
   crew) resolve_crew ;;
   secondmate) resolve_secondmate ;;
