@@ -131,6 +131,11 @@ mkdir -p "$STATE"
 # gate and the wake emission (inbox_steer_check below).
 # shellcheck source=bin/fm-task-inbox-lib.sh
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
+# Per-worker memory-scope diagnosis (fm_agent_memory_report_oom_kill), used by
+# surface_nonterminal_stale below to name a confirmed OOM-killed crew instead
+# of surfacing it as a generic stale/possible-wedge wake.
+# shellcheck source=bin/fm-agent-memory-lib.sh
+. "$SCRIPT_DIR/fm-agent-memory-lib.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -762,13 +767,20 @@ pause_state_class() {  # <window> <task>
 }
 
 surface_nonterminal_stale() {  # <window> <hash>
-  local win=$1 h=$2 key task last
+  local win=$1 h=$2 key task last agent_alive
   key=$(window_key "$win")
   fm_wake_append stale "$win" "stale: $win" || exit 1
   printf '%s' "$h" > "$STATE/.stale-$key"
   rm -f "$STATE/.stale-since-$key"
   clear_write_tracking "$key"
   task=$(window_to_task "$win" "$STATE")
+  # First sighting of this stale hash is the earliest point a just-dead crew's
+  # scope can be checked, before systemd garbage-collects it. A confirmed-dead
+  # endpoint whose recorded scope shows Result=oom-kill gets one durable
+  # `failed:` line naming the exact limit; anything else (still alive, no
+  # scope, already collected) is a silent no-op - never escalates on a guess.
+  agent_alive=$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
+  [ "$agent_alive" = dead ] && fm_agent_memory_report_oom_kill "$STATE" "$task"
   last=$(last_status_line "$STATE/$task.status")
   if status_is_paused_or_captain_held "$last"; then
     : > "$STATE/.paused-$key"

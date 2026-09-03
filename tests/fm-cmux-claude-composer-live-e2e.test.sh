@@ -31,6 +31,13 @@ if [ "${FM_CMUX_CLAUDE_COMPOSER_LIVE:-0}" != 1 ]; then
   exit 0
 fi
 
+# This guard drives the real fm-spawn.sh but does not source tests/lib.sh, so
+# its global FM_AGENT_MEMORY_DISABLE=1 exemption never reaches it - exempt
+# this real spawn from the per-worker memory-scope wrapper (bin/fm-agent-memory-lib.sh)
+# the same way, so a systemd-capable host does not change this drift guard's
+# process-tree shape.
+export FM_AGENT_MEMORY_DISABLE=1
+
 command -v claude >/dev/null 2>&1 || fail "FM_CMUX_CLAUDE_COMPOSER_LIVE=1 but Claude Code is not installed"
 command -v cmux >/dev/null 2>&1 || fail "FM_CMUX_CLAUDE_COMPOSER_LIVE=1 but cmux is not installed"
 command -v jq >/dev/null 2>&1 || fail "FM_CMUX_CLAUDE_COMPOSER_LIVE=1 but jq is not installed"

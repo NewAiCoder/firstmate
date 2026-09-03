@@ -66,6 +66,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-busy-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
+# shellcheck source=bin/fm-agent-memory-lib.sh
+. "$SCRIPT_DIR/fm-agent-memory-lib.sh"
 
 ID=${1:-}
 [ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
@@ -81,11 +83,23 @@ case "$NM_TIMEOUT" in ''|*[!0-9]*) NM_TIMEOUT=10 ;; esac
 FM_CREW_STATE_RUNS_LIMIT=${FM_CREW_STATE_RUNS_LIMIT:-200}
 case "$FM_CREW_STATE_RUNS_LIMIT" in ''|*[!0-9]*) FM_CREW_STATE_RUNS_LIMIT=200 ;; esac
 SEP=' · '
+# Set from meta below, once the meta file is known to exist. Read-only here:
+# fm_agent_memory_current is a pure `systemctl --user show` query, never a
+# write, keeping this script's documented read-only/side-effect-free
+# contract intact.
+MEMORY_SCOPE=""
 
-# Emit the one canonical line and exit 0. Detail is optional.
+# Emit the one canonical line and exit 0. Detail is optional. When this
+# task's meta recorded a memory scope (bin/fm-agent-memory-lib.sh), append
+# its live MemoryCurrent so per-worker usage is visible on every read, not
+# only a dead one - an absent/already-collected scope adds nothing.
 emit() {  # <state> <source> [detail]
-  local line="state: $1${SEP}source: $2"
+  local line="state: $1${SEP}source: $2" mem
   [ -n "${3:-}" ] && line="$line${SEP}$3"
+  if [ -n "$MEMORY_SCOPE" ]; then
+    mem=$(fm_agent_memory_current "$MEMORY_SCOPE") \
+      && line="$line${SEP}memory: $(fm_agent_memory_human_bytes "$mem")"
+  fi
   printf '%s\n' "$line"
   exit 0
 }
@@ -102,6 +116,7 @@ WT=$(meta_value worktree)
 KIND=$(meta_value kind)
 HARNESS=$(meta_value harness)
 REMOTE_HOST=$(meta_value remote_host)
+MEMORY_SCOPE=$(meta_value memory_scope)
 [ -n "$KIND" ] || KIND=ship
 
 # A torn-down (or never-created) worktree has no current state to read. A
@@ -589,7 +604,16 @@ fi
 # is no run to consult, so a dead/unreadable target means the crew is gone: report
 # unknown rather than trusting a possibly-stale status log as the current state.
 [ -n "$BACKEND_TARGET" ] || emit unknown none "no backend target recorded"
-pane_readable "$BACKEND_TARGET" || emit unknown none "backend target gone: $BACKEND_TARGET"
+if ! pane_readable "$BACKEND_TARGET"; then
+  GONE_DETAIL="backend target gone: $BACKEND_TARGET"
+  if [ -n "$MEMORY_SCOPE" ]; then
+    MEMORY_RESULT=$(fm_agent_memory_result "$MEMORY_SCOPE") || MEMORY_RESULT=
+    if fm_agent_memory_is_oom "$MEMORY_RESULT"; then
+      GONE_DETAIL="$GONE_DETAIL (killed by the per-worker memory limit: MemoryMax=$(meta_value memory_max))"
+    fi
+  fi
+  emit unknown none "$GONE_DETAIL"
+fi
 
 # Secondmates idle on their own watcher (idle pane = healthy), so the busy
 # state is not meaningful for them; read their state from the status log only.
