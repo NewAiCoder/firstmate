@@ -149,6 +149,11 @@ mkdir -p "$STATE"
 # watcher reads only its presence (afk_record_present below).
 # shellcheck source=bin/fm-afk-contract.sh
 . "$SCRIPT_DIR/fm-afk-contract.sh"
+# Per-worker memory-scope diagnosis (fm_agent_memory_report_oom_kill), used by
+# surface_nonterminal_stale below to name a confirmed OOM-killed crew instead
+# of surfacing it as a generic stale/possible-wedge wake.
+# shellcheck source=bin/fm-agent-memory-lib.sh
+. "$SCRIPT_DIR/fm-agent-memory-lib.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -1268,7 +1273,7 @@ captain_call_stale_bound() {  # <window-key> <task>
 # above): the status line the worker declared, and the backlog hold firstmate
 # recorded once the captain took the work in hand.
 surface_nonterminal_stale() {  # <window> <hash>
-  local win=$1 h=$2 key task last declared=1 bounded=1 throttled=1 until now
+  local win=$1 h=$2 key task last declared=1 bounded=1 throttled=1 until now agent_alive
   key=$(window_key "$win")
   task=$(window_to_task "$win" "$STATE")
   last=$(last_status_line "$STATE/$task.status")
@@ -1310,6 +1315,13 @@ surface_nonterminal_stale() {  # <window> <hash>
   printf '%s' "$h" > "$STATE/.stale-$key"
   rm -f "$STATE/.stale-since-$key"
   clear_write_tracking "$key"
+  # First sighting of this stale hash is the earliest point a just-dead crew's
+  # scope can be checked, before systemd garbage-collects it. A confirmed-dead
+  # endpoint whose recorded scope shows Result=oom-kill gets one durable
+  # `failed:` line naming the exact limit; anything else (still alive, no
+  # scope, already collected) is a silent no-op - never escalates on a guess.
+  agent_alive=$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
+  [ "$agent_alive" = dead ] && fm_agent_memory_report_oom_kill "$STATE" "$task"
   if [ "$declared" -eq 0 ]; then
     : > "$STATE/.paused-$key"
     date +%s > "$STATE/.paused-rechecked-$key"
