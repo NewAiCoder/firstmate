@@ -560,16 +560,20 @@ fm_idle_compact_advance_settling() {  # <state> <task> <marker>
 
   declared=$(fm_idle_compact_marker_field "$marker" declared)
 
+  # The declared-state fast path leaves the worker waiting on firstmate, not
+  # on an external event - ring it once, right at the settling->done
+  # transition, so it never sits idle past its own compaction. The ring is a
+  # live send like every other one in this file, so it waits for the same
+  # safety gate first; when unsafe, the marker stays in phase=settling so a
+  # later sweep retries instead of typing into a pane that may be mid-turn.
+  if [ "$declared" = 1 ]; then
+    fm_idle_compact_safe_to_send "$state" "$task" || return 0
+    fm_idle_compact_send "$state" "$task" "$(fm_idle_compact_ring_message)" || return 0
+  fi
+
   fm_idle_compact_marker_write "$marker" phase=done \
     "status_sig=$(fm_idle_compact_status_sig "$state" "$task")" \
     "pane_sig=$(fm_idle_compact_pane_sig "$FM_IDLE_COMPACT_BACKEND" "$FM_IDLE_COMPACT_TARGET" "$FM_IDLE_COMPACT_LABEL")"
-
-  # The declared-state fast path leaves the worker waiting on firstmate, not
-  # on an external event - ring it once, right at the settling->done
-  # transition, so it never sits idle past its own compaction.
-  if [ "$declared" = 1 ]; then
-    fm_idle_compact_send "$state" "$task" "$(fm_idle_compact_ring_message)"
-  fi
   return 0
 }
 
