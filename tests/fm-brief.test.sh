@@ -497,10 +497,10 @@ test_no_mistakes_dod_carries_quota_efficiency_rules() {
   assert_grep "rings you with a durable inbox message telling you to start the validation run" "$brief" \
     "no-mistakes DOD must describe firstmate's compact-then-ring handoff"
 
-  assert_grep "no more than once every 10 minutes" "$brief" \
-    "no-mistakes DOD must bound the axi status polling cadence"
-  assert_grep "a foreground \`sleep 600\` between checks" "$brief" \
-    "no-mistakes DOD must require a foreground sleep, never a detached wait"
+  assert_grep "do NOT poll and do NOT sleep" "$brief" \
+    "no-mistakes DOD must forbid a foreground sleep loop while a pipeline round runs (D5)"
+  assert_grep "when-nm-state-$id" "$brief" \
+    "no-mistakes DOD must name this task's deterministic pipeline-state watch (D5)"
   assert_grep "paused: no-mistakes run in progress, clears on its own" "$brief" \
     "no-mistakes DOD must tell the worker to declare paused: while a pipeline round runs"
   assert_grep "resolved: run returned" "$brief" \
