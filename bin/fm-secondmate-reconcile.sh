@@ -76,6 +76,17 @@ case "$FM_RECONCILE_COOLDOWN_SECONDS" in
   ''|*[!0-9]*) echo "fm-secondmate-reconcile: FM_RECONCILE_COOLDOWN_SECONDS must be a whole number of seconds" >&2; exit 2 ;;
 esac
 
+# fm_reconcile_now: the wall clock the cooldown age check reads. FM_RECONCILE_NOW
+# pins it (mirrors FM_INACTIVE_RECONCILE_NOW in bin/fm-inactive-reconcile.sh) so
+# a boundary test can anchor the aged nudge record and the comparison to the
+# same fixed instant instead of racing two independent real-clock reads.
+fm_reconcile_now() {
+  case "${FM_RECONCILE_NOW:-}" in
+    ''|*[!0-9]*) date +%s ;;
+    *) printf '%s\n' "$FM_RECONCILE_NOW" ;;
+  esac
+}
+
 ACTIVE_RECONCILE_LOCK=
 ACTIVE_CONTROL_LOCK=
 ACTIVE_META_LOCK=
@@ -248,7 +259,7 @@ cmd_notify() {
       continue
     fi
     ACTIVE_RECONCILE_LOCK=$reconcile_lock
-    now=$(date +%s)
+    now=$(fm_reconcile_now)
     last=
     if [ -f "$path" ] && [ ! -L "$path" ]; then last=$(cat "$path" 2>/dev/null || true); fi
     case "$last" in ''|*[!0-9]*) last= ;; esac
