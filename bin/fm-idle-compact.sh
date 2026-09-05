@@ -55,7 +55,11 @@
 #      episode settles to phase=done, the worker is rung with a durable
 #      inbox message ("compacted - start the validation run now") instead of
 #      being left silently idle, since it is waiting on firstmate to
-#      continue rather than on an external event.
+#      continue rather than on an external event. That ring is a live send
+#      like every other one in this file, so it waits for the same live
+#      safety gate first; when unsafe, the marker stays in phase=settling so
+#      a later sweep retries instead of typing into a pane that may be
+#      mid-turn.
 #   2. phase=save-sent: wait for a NEW turn-ended signature - proof the save
 #      turn actually completed, the same signal bin/fm-watch.sh's signal scan
 #      already trusts - then re-run the full eligibility check (the crew may
