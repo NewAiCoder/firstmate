@@ -37,7 +37,7 @@ SNAP="$TMP/snap"
 
 NM_STUB_OUT="$TMP/a.toon" bash "$SCRIPT" "$TMP/wt" "$SNAP"
 check "first call writes the snapshot and does not fire" 1 "$?"
-[ -s "$SNAP" ] && echo "ok - snapshot written" || { echo "FAIL - no snapshot"; FAIL=1; }
+if [ -s "$SNAP" ]; then echo "ok - snapshot written"; else echo "FAIL - no snapshot"; FAIL=1; fi
 
 NM_STUB_OUT="$TMP/b.toon" bash "$SCRIPT" "$TMP/wt" "$SNAP"
 check "elapsed churn alone does not fire" 1 "$?"
