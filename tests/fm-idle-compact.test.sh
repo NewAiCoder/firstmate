@@ -491,7 +491,9 @@ test_settling_declared_unsafe_pane_defers_ring_stays_settling() {
     write_task_meta "$dir/state" t1
     touch_status "$dir/state" t1 3600
     log="$dir/sends.log"; : > "$log"
+    # shellcheck disable=SC2329 # invoked indirectly through fm_idle_compact_safe_to_send
     fm_busy_classify() { printf 'busy claude-hook'; }
+    # shellcheck disable=SC2329 # invoked indirectly through fm_idle_compact_safe_to_send
     fm_backend_composer_state() { printf 'empty'; }
     stub_recording_send "$log"
     FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")

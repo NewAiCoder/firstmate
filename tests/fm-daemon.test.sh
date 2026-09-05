@@ -1630,6 +1630,9 @@ test_strip_injection_marker() {
   local encoded stripped
   fm_operational_input_encode away-supervisor "Supervisor escalate: done" encoded \
     || fail "could not encode current away fixture"
+  # shellcheck disable=SC2031 # false positive: an unrelated local "encoded" in
+  # bin/fm-classify-lib.sh's subshell gets conflated with this one by
+  # ShellCheck's cross-file --external-sources analysis.
   stripped=$(strip_injection_marker "$encoded")
   [ "$stripped" = "Supervisor escalate: done" ] \
     || fail "current typed operational envelope not stripped: '$stripped'"
