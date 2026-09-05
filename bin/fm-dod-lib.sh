@@ -22,6 +22,12 @@
 # restating the rule.
 # Every heredoc here stays outside a command substitution: `VAR=$(cat <<EOF ...)`
 # breaks parsing of the whole file on Bash 3.2 (tests/fm-brief.test.sh).
+# The no-mistakes block interpolates $FM_ROOT so the generated brief carries an
+# absolute path to bin/fm-diff-size-check.sh. bin/fm-brief.sh and
+# bin/fm-promote.sh both already set FM_ROOT before calling fm_dod_block; this
+# default keeps the library self-sufficient under `set -u` for anything else
+# that sources it directly, such as tests/fm-dod-round-cap.test.sh.
+FM_ROOT="${FM_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 # Return 0 when a Task subsection still consists only of its scaffold
 # placeholder. A missing file and legacy briefs carry no such placeholders.
@@ -204,6 +210,12 @@ EOF
 Delivery contract: mode=no-mistakes
 The task is complete only when committed on your branch.
 Right after that implementation commit lands, append \`paused: awaiting compaction before validation\` to the status file and stop for this turn - do NOT run \`no-mistakes axi run\` yet. A worker cannot self-trigger compaction (\`/compact\` is a terminal built-in, not a tool you can invoke), so firstmate's idle-compact watcher reads that exact line, compacts your context while it is still warm, then rings you with a durable inbox message telling you to start the validation run - resume from that ring instead of waiting on a reply.
+
+Before your FIRST \`no-mistakes axi run\`, measure this lane:
+\`bash $FM_ROOT/bin/fm-diff-size-check.sh .\`
+It prints the changed-line count and one verdict. \`ok\` and \`over-target\` both proceed: note the number in your status line and start the run.
+\`over-cap\` (more than 800 changed lines) means STOP before starting the pipeline: append \`needs-decision: lane is <N> changed lines, over the 800 cap - split into <your proposed split> or proceed as one lane?\` and stop. Firstmate answers; it may well say proceed. Do NOT refuse the work and do NOT split it yourself.
+The check is advice with a stopping point, not a gate: it exists because a lane's size is what drives its review round count, and it is cheapest to notice before the first round rather than during the sixth.
 
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.

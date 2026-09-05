@@ -166,6 +166,18 @@ elif [ "$MODE_SET" -eq 1 ]; then
   echo "error: --mode applies only to ship briefs; a scout delivers a report and a secondmate charter is not a delivery contract" >&2
   exit 1
 fi
+
+# Unit 4: a brief with many acceptance items is a lane that will not fit one
+# surface. Warn at scaffold time, when splitting is still cheap; never refuse,
+# because firstmate may have a good reason and this is a heuristic.
+if [ "$KIND" = ship ] && [ -n "${FM_BRIEF_ACCEPTANCE_ITEMS:-}" ]; then
+    if [ "$FM_BRIEF_ACCEPTANCE_ITEMS" -gt 5 ] 2>/dev/null; then
+        echo "warning: $FM_BRIEF_ACCEPTANCE_ITEMS acceptance items in one lane." >&2
+        echo "         Target is one surface per lane, under 400 changed lines." >&2
+        echo "         Consider splitting before dispatch; a lane's size drives its review round count." >&2
+    fi
+fi
+
 ID=${POS[0]}
 
 if [ "$KIND" = secondmate ] && [ "$HERDR_LAB" -eq 1 ]; then
@@ -473,6 +485,7 @@ $ASK_USER_BLOCK
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
 8. Never run \`gh issue close\`, \`gh issue reopen\`, or any \`gh project\` command - issues close through
    the PR body's \`closes #N\` on merge, and the project board is not used.
+9. One surface per lane, target under 400 changed lines. Before your first \`no-mistakes axi run\`, measure your own diff (Definition of done says how). Over 800 lines, stop and ask firstmate to split the task rather than pushing on: a lane's size is what drives its review round count, and portfolio-tracker's median merged PR of 1,026 lines cost 9.6 review rounds per run against 6.7 for a project whose median was 491.
 
 $INBOX_SECTION
 
