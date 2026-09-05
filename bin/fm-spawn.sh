@@ -1281,7 +1281,16 @@ launch_template() {
     # alone disables the feature; keep both so a managed override of one still
     # leaves the other in force. Both are per-launch, scoped to this invocation only,
     # and never touch the captain's global ~/.claude/settings.json.
-    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '\''{"feedbackDrafts":"off"}'\'' __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    # D6 (spec Unit 3): a crewmate or scout launches with the MINIMAL tool
+    # surface. --strict-mcp-config plus a per-task --mcp-config makes the MCP
+    # set exactly what fm-spawn wrote for this task's declared extras (empty by
+    # default), and --setting-sources project,local drops the user settings
+    # layer that enables the plugin skill catalog. Measured cost of the old
+    # surface: a 135k-145k token cold prefix re-read across ~280 turns per
+    # crewmate seat, of which the global rules layer was only 23k-27k.
+    # A task that genuinely needs an extra names it on the brief's `tools:`
+    # line; fm_brief_tools reads it and fm-spawn writes the matching MCP entry.
+    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '\''{"feedbackDrafts":"off"}'\'' --setting-sources project,local --strict-mcp-config --mcp-config __MCPCONFIG__ __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     codex)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'codex __MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
@@ -3185,6 +3194,29 @@ fi
 "$SCRIPT_DIR/fm-home-summary-refresh.sh" --best-effort || true
 [ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
 
+# D6: build this task's MCP config from the brief's declared extras. Default
+# is the empty set; an unknown extra was already dropped by fm_brief_tools.
+MCP_CONFIG="$TASK_TMP/mcp.json"
+TOOLS_EXTRAS=$(fm_brief_tools "$BRIEF" 2>/dev/null)
+{
+    printf '{"mcpServers":{'
+    sep=''
+    for extra in $TOOLS_EXTRAS; do
+        case "$extra" in
+            context7)
+                printf '%s"context7":{"command":"npx","args":["-y","@upstash/context7-mcp"]}' "$sep"
+                sep=',' ;;
+        esac
+    done
+    printf '}}'
+} > "$MCP_CONFIG"
+chmod 0600 "$MCP_CONFIG"
+if [ -n "$TOOLS_EXTRAS" ]; then
+    echo "tool surface: minimal + $TOOLS_EXTRAS"
+else
+    echo "tool surface: minimal (no MCP servers, no plugin skills)"
+fi
+
 sq_brief=$(shell_quote "$BRIEF")
 sq_turnend=$(shell_quote "$TURNEND")
 sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
@@ -3192,8 +3224,10 @@ sq_piturnend=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-turnend-guard.ts
 sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
 sq_worktree=$(shell_quote "$WT")
+sq_mcpconfig=$(shell_quote "$MCP_CONFIG")
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT")
+LAUNCH=${LAUNCH//__MCPCONFIG__/$sq_mcpconfig}
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}

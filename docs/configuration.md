@@ -412,6 +412,16 @@ The Kimi installer requires an existing regular non-symlink `~/.kimi-code/config
 Its `remove` action excises only the marker-delimited Firstmate region and removes Firstmate's hook files.
 For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected executable with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
 
+### Worker tool surface (`tools:` in the brief)
+
+A crewmate or scout launches with the minimal Claude Code tool surface: `--strict-mcp-config` with a per-task `--mcp-config` (empty by default) and `--setting-sources project,local`, which drops the user settings layer that carries the plugin skill catalog.
+The brief's `## Firstmate spec` section may widen it with one `tools:` line naming the extras this task needs, from `browser`, `context7`, `mockup`, `lavish`, or `none`.
+`bin/fm-dod-lib.sh`'s `fm_brief_tools` owns the parsing and drops an unrecognized entry with a warning, so a typo narrows the surface rather than widening it unpredictably.
+`bin/fm-spawn.sh` writes the resolved MCP config into the task tmp dir at 0600 and prints one `tool surface:` line at launch.
+
+The measured reason: a crewmate's cold prefix was 135k to 145k tokens across 166 seats in the week of 2026-08-29, of which the on-disk global rules layer was only 23k to 27k, and the seat re-read that prefix across an average of 280 turns.
+Pipeline seats get the same surface through `~/.claude/templates/no-mistakes-agent-args.yaml` (`NewAiCoder/claude-portable`).
+
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
