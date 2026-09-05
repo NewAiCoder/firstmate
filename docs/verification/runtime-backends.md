@@ -391,7 +391,28 @@ all fm-idle-compact-live-e2e checks passed
 
 The same command is the refresh path after any Claude Code upgrade; rerun it and record the new version rather than trusting recorded evidence across releases.
 
-Only Claude is verified here - every other verified harness (`codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, `muse`) is reviewed and not applicable: none has a verified compaction slash-command surface today, so idle-compact's harness check (`harness=claude` in `state/<id>.meta`) skips them by construction rather than guessing at an unverified command.
+Only Claude is verified here as a harness - every other verified harness (`codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, `muse`) is reviewed and not applicable: none has a verified compaction slash-command surface today, so idle-compact's harness check (`harness=claude` in `state/<id>.meta`) skips them by construction rather than guessing at an unverified command.
+`fm_idle_compact_safe_to_send` takes the backend as a runtime argument (the value recorded in the task's own `state/<id>.meta`), so the composition is backend-generic; herdr is the fleet default backend today, so the same live guard has a herdr sibling that drives a real Claude Code session inside a real herdr pane instead of a tmux socket, proving `fm_busy_classify` and `fm_backend_composer_state` compose correctly through the herdr per-backend dispatch too.
+
+```sh
+FM_IDLE_COMPACT_LIVE=1 tests/fm-idle-compact-herdr-live-e2e.test.sh
+```
+
+Verified on 2026-09-05 against the shipped code on herdr 0.8.0, Claude Code 2.1.261, Linux x86_64, on an isolated private herdr lab session (`fm-lab-idlec-herdr-live-<pid>`), with no prompt submitted to Claude.
+
+Observed output:
+
+```text
+ok - claude (2.1.261 (Claude Code)) on herdr: a real busy-state record correctly blocks the send through fm_busy_classify, even with a genuinely empty composer
+ok - claude (2.1.261 (Claude Code)) on herdr: a real idle busy-state record plus a real empty Claude Code composer together permit the send through fm_idle_compact_safe_to_send
+ok - claude (2.1.261 (Claude Code)) on herdr: a real pending (unsubmitted) composer correctly blocks the send
+ok - claude (2.1.261 (Claude Code)) on herdr: a real idle+empty composer after the save turn completes sends /compact and reaches phase=settling
+ok - claude (2.1.261 (Claude Code)) on herdr: the settle sweep captures the post-render baseline and reaches phase=done without further sends
+# no message was ever actually submitted to the live claude process - fm_idle_compact_send was stubbed throughout, so no model tokens were spent
+all fm-idle-compact-herdr-live-e2e checks passed
+```
+
+The same command is the refresh path after any Herdr or Claude Code upgrade; rerun it and record the new versions rather than trusting recorded evidence across releases.
 See `docs/configuration.md` "Idle-worker pre-compaction" and "Harness compatibility".
 
 ## Herdr

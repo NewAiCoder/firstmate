@@ -203,8 +203,8 @@ See [`wedge-alarm.md`](wedge-alarm.md) for the current channel reference, [`veri
 Once a Claude prompt cache expires (a one-hour TTL on this account), the next steer to a long-idle crewmate reprocesses its whole context uncached, which is real quota burn on a subscription account.
 `bin/fm-idle-compact.sh` is the shared owner of an opt-in housekeeping pass that compacts a genuinely idle Claude crewmate while its cache is still warm, so a later revival is cheap.
 It ships inert, exactly like Relay: an absent local, gitignored `config/idle-compact` means no behavior change anywhere.
-When present, its first non-empty, non-comment line is the idle threshold in whole minutes; 30 is the documented recommended value.
-An empty-but-present file (blank or comment-only) also enables the feature at that same 30-minute default.
+When present, its first non-empty, non-comment line is the idle threshold in whole minutes; 15 is the documented recommended value.
+An empty-but-present file (blank or comment-only) also enables the feature at that same 15-minute default.
 A malformed value (not a positive integer) is treated exactly like an absent file - disabled - because a config typo must never turn into a watcher-loop failure.
 `bin/fm-watch.sh`'s main loop and `bin/fm-supervise-daemon.sh`'s `housekeeping` both call the same shared entry point on their own existing cadence, so the eligibility and action logic has exactly one owner and the two supervision paths cannot drift.
 

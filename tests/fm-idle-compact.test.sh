@@ -101,22 +101,22 @@ test_config_absent_is_disabled() {
   pass "fm_idle_compact_threshold_minutes: absent config/idle-compact disables the feature"
 }
 
-test_config_empty_file_uses_default_30() {
+test_config_empty_file_uses_default_15() {
   local dir out
   dir=$(new_dir config-empty)
   : > "$dir/config/idle-compact"
   out=$(fm_idle_compact_threshold_minutes "$dir/config") || fail "an empty-but-present file must enable the feature"
-  [ "$out" = 30 ] || fail "expected the documented 30-minute default, got '$out'"
-  pass "fm_idle_compact_threshold_minutes: an empty-but-present file enables the feature at the 30-minute default"
+  [ "$out" = 15 ] || fail "expected the documented 15-minute default, got '$out'"
+  pass "fm_idle_compact_threshold_minutes: an empty-but-present file enables the feature at the 15-minute default"
 }
 
-test_config_comment_only_uses_default_30() {
+test_config_comment_only_uses_default_15() {
   local dir out
   dir=$(new_dir config-comment)
   printf '# just a comment\n\n# another\n' > "$dir/config/idle-compact"
   out=$(fm_idle_compact_threshold_minutes "$dir/config") || fail "a comment-only file must enable the feature"
-  [ "$out" = 30 ] || fail "expected the documented 30-minute default, got '$out'"
-  pass "fm_idle_compact_threshold_minutes: a comment-only file enables the feature at the 30-minute default"
+  [ "$out" = 15 ] || fail "expected the documented 15-minute default, got '$out'"
+  pass "fm_idle_compact_threshold_minutes: a comment-only file enables the feature at the 15-minute default"
 }
 
 test_config_valid_value_used_verbatim() {
@@ -145,7 +145,7 @@ test_config_whitespace_only_line_is_treated_as_empty() {
   dir=$(new_dir config-whitespace)
   printf '   \n\t\n' > "$dir/config/idle-compact"
   out=$(fm_idle_compact_threshold_minutes "$dir/config") || fail "a whitespace-only file has no non-blank content line, so it must behave like an empty file (enabled)"
-  [ "$out" = 30 ] || fail "expected the documented 30-minute default, got '$out'"
+  [ "$out" = 15 ] || fail "expected the documented 15-minute default, got '$out'"
   pass "fm_idle_compact_threshold_minutes: a whitespace-only file trims to no content and enables the feature at the default"
 }
 
@@ -1007,8 +1007,8 @@ test_tick_held_sweep_lock_defers_whole_sweep() {
 # --- run ---------------------------------------------------------------------
 
 test_config_absent_is_disabled
-test_config_empty_file_uses_default_30
-test_config_comment_only_uses_default_30
+test_config_empty_file_uses_default_15
+test_config_comment_only_uses_default_15
 test_config_valid_value_used_verbatim
 test_config_invalid_value_disabled
 test_config_whitespace_only_line_is_treated_as_empty

@@ -12,7 +12,7 @@
 # fm_idle_compact_tick returns immediately after one [ -f ] check, with no
 # state mutation anywhere. Present, its first non-empty, non-comment line is
 # the idle threshold in whole minutes (an empty-but-present file enables the
-# feature at the documented 30-minute default); an invalid value is treated
+# feature at the documented 15-minute default); an invalid value is treated
 # exactly like an absent file, because a config typo must never fail a
 # watcher/daemon loop. See docs/configuration.md "Idle-worker pre-compaction"
 # for the full contract.
@@ -94,7 +94,7 @@ DATA="${FM_DATA_OVERRIDE:-${DATA:-$FM_HOME/data}}"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
 
-FM_IDLE_COMPACT_DEFAULT_MINUTES=30
+FM_IDLE_COMPACT_DEFAULT_MINUTES=15
 FM_IDLE_COMPACT_CREW_STATE_BIN="${FM_CREW_STATE_BIN:-$SCRIPT_DIR/fm-crew-state.sh}"
 
 # --- config parsing ---------------------------------------------------------
