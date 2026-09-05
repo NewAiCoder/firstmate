@@ -210,20 +210,20 @@ Follow the guidance no-mistakes itself provides for the mechanics: it loads when
 When starting no-mistakes, pass \`--intent\` as only this brief's \`## Captain's intent\` subsection plus any later words the captain actually said.
 For a legacy brief with no such subsection, include only words explicitly labeled \`Captain:\`, \`Captain's words:\`, \`Captain's ask:\`, or \`Captain's intent:\`; never copy its mixed \`# Task\` wholesale. If it has no provenance-marked captain words, stop and ask firstmate instead of starting no-mistakes.
 Do not include \`## Firstmate spec\`, later Firstmate build constraints, or your own decisions and tradeoffs.
+Carry forward this brief's ban on \`gh issue close\`, \`gh issue reopen\`, and \`gh project\` commands so pipeline seats inherit it.
 The \`--intent\` string you pass must be self-sufficient: that string plus the codebase must let a reader reconstruct roughly the same specification, without depending on a separate report, a PR, or context that lives only in this conversation.
 When the captain's intent refers to a report, decision, or PR ("do items 1, 2, 3, and 7 of the report"), write the substance of the referenced items into \`--intent\` in the captain's terms, not only the pointer; that substance is the captain's ask by reference, while Firstmate's build instructions and your own decisions still stay out.
 This replaces the no-mistakes skill's advice to enrich \`--intent\` with decisions and tradeoffs; that advice does not apply to Firstmate-dispatched work.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
 While a pipeline round runs, check \`no-mistakes axi status\` no more than once every 10 minutes - a foreground \`sleep 600\` between checks, never a detached call waiting on a notification that never comes. Declare \`paused: no-mistakes run in progress, clears on its own\` in the status file while you wait, and \`resolved: run returned\` the moment it parks; then answer that parked gate with a short foreground call.
 
-Four firstmate-specific rules layer on top of that guidance:
+Three firstmate-specific rules layer on top of that guidance:
 - ask-user findings are never yours to answer: escalate to firstmate using rule 6's ask-user format and stop.
   Firstmate applies \`ask-user-authority\` and obtains any required captain decision.
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
 - NEVER pass \`--yes\` (or \`-y\`) to \`no-mistakes axi run\` or \`no-mistakes axi respond\`. It is banned fleet-wide.
   It auto-resolves every gate including ask-user findings with no escalation, and answering your own ask-user finding is a hard rule violation.
 - Default convergence after the second review round: apply only findings the gate classifies auto-fix and genuine data-correctness or safety bugs, list every other finding in the PR body under "Deferred findings", and land the run. This brief's own \`# Task\` section may override that default in either direction.
-- This brief's ban on \`gh issue close\`, \`gh issue reopen\`, and \`gh project\` commands (rule 8) is not carried into \`--intent\` under the rule above, but it still binds you and every pipeline fix seat working on this task: issues close through the PR body's \`closes #N\` on merge, never a manual command.
 
 Pass an absolute path as the PATH argument of \`grep\`, \`sed\`, \`find\`, and \`cat\`, and never \`cd\` before reading or writing a relative path - that shape forces a manual approval prompt and nobody is watching for it.
 
