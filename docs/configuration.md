@@ -218,7 +218,12 @@ Eligibility, checked for every task recorded under `state/*.meta`, is strictly t
 - A live safety gate immediately before typing anything: `bin/fm-busy-lib.sh`'s `fm_busy_classify` reports an exact `idle` verdict (never `busy` and never an unproven `unknown`) and `bin/fm-backend.sh`'s `fm_backend_composer_state` reports exactly `empty`, reusing the identical primitives the away-mode daemon's own injection boundary uses.
   A busy pane, an unproven verdict, or a non-empty composer defers to the next sweep rather than erroring.
 
-A durable per-task marker at `state/.idle-compact-<task>` (named after the existing `.hb-surfaced-<task>`/`.seen-*` convention) drives a 4-phase state machine so one idle episode produces at most one compaction:
+**Declared-state fast path:** a worker cannot self-trigger `/compact` (it is a terminal built-in, not a tool), so a no-mistakes ship brief tells the worker to append the exact status line `paused: awaiting compaction before validation` right after its implementation commit, then end its turn - before starting `no-mistakes axi run`.
+When that is the task's own latest status line, eligibility ignores the idle-minutes threshold entirely (every other exclusion and the live safety gate still apply), and the episode skips the notes-save turn below and sends `/compact` directly, naming the branch, the brief path, and the delivery contract.
+Once that episode settles to `phase=done`, the worker is rung with a durable inbox message ("compacted - start the validation run now") instead of being left idle, since it is waiting on firstmate to continue rather than on an external event.
+See `bin/fm-idle-compact.sh`'s header comment for the exact mechanics and `bin/fm-dod-lib.sh`'s no-mistakes block for the worker-facing instruction.
+
+A durable per-task marker at `state/.idle-compact-<task>` (named after the existing `.hb-surfaced-<task>`/`.seen-*` convention) drives a 4-phase state machine so one idle episode produces at most one compaction (the declared-state fast path above skips straight to step 2, marked `declared=1`):
 
 1. No marker: eligible and safe -> send a guarded message asking the crewmate to write its open decision keys, current gate/step, next actions, and key file paths to `data/<id>/precompact-notes.md` (it survives worktree churn), then record `phase=save-sent` with the current `state/<id>.turn-ended` signature and the send epoch.
 2. `phase=save-sent`: wait for a *new* `turn-ended` signature (proof the save turn actually completed, the same signal the watcher's signal scan already trusts) before doing anything else; a bounded `FM_IDLE_COMPACT_SAVE_TIMEOUT_SECS` abandons a turn that never completes.
