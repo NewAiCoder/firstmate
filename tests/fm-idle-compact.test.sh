@@ -261,6 +261,35 @@ test_eligible_includes_every_wait_state() {
   ) || exit 1
 }
 
+# --- declared-state fast path (fm_idle_compact_declared_paused) -------------
+
+test_eligible_declared_state_bypasses_threshold() {
+  (
+    local dir
+    dir=$(new_dir elig-declared)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 5 'paused: awaiting compaction before validation'
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    fm_idle_compact_eligible "$dir/state" t1 30 \
+      || fail "the exact declared-state phrase must bypass the idle-minutes threshold even when the status is only 5s old"
+    pass "fm_idle_compact_eligible: the declared-state phrase bypasses the idle-minutes threshold"
+  ) || exit 1
+}
+
+test_eligible_other_paused_text_still_gated_by_threshold() {
+  (
+    local dir
+    dir=$(new_dir elig-declared-other)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 5 'paused: waiting on an upstream release'
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    if fm_idle_compact_eligible "$dir/state" t1 30; then
+      fail "any other paused: text must still be gated by the ordinary idle-minutes threshold"
+    fi
+    pass "fm_idle_compact_eligible: any paused: text other than the exact declared phrase gets no bypass"
+  ) || exit 1
+}
+
 # --- live safety gate (fm_idle_compact_safe_to_send) ------------------------
 
 test_safe_to_send_requires_exact_idle() {
@@ -379,6 +408,100 @@ test_no_marker_unsafe_pane_defers_no_send() {
     [ ! -e "$marker" ] || fail "an eligible task with a busy pane must not get a marker yet"
     [ ! -s "$log" ] || fail "a busy pane must never be sent anything"
     pass "fm_idle_compact_process_task: eligible but unsafe (busy pane) defers to a later sweep, never sends"
+  ) || exit 1
+}
+
+test_no_marker_declared_state_skips_save_sends_compact_directly() {
+  (
+    local dir log marker
+    dir=$(new_dir sm-declared)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 5 'paused: awaiting compaction before validation'
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+
+    fm_idle_compact_process_task "$dir/state" t1 30
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = settling ] \
+      || fail "the declared-state fast path must jump straight to phase=settling, skipping phase=save-sent"
+    [ "$(fm_idle_compact_marker_field "$marker" declared)" = 1 ] \
+      || fail "the marker must record declared=1 so the settle transition knows to ring the worker"
+    [ "$(wc -l < "$log")" = 1 ] || fail "exactly one send (a direct /compact) must have gone out, no notes-save message"
+    [ "$(cut -f2 "$log")" = t1 ] || fail "the declared-state send must target t1"
+    case "$(cut -f3 "$log")" in
+      '/compact '*) : ;;
+      *) fail "the declared-state send must be a literal /compact command" ;;
+    esac
+    grep -q "branch fm/t1" "$log" || fail "the declared-state /compact focus text must name the branch"
+    grep -q "brief.md" "$log" || fail "the declared-state /compact focus text must name the brief path"
+    grep -q "mode=" "$log" || fail "the declared-state /compact focus text must name the delivery contract"
+    pass "fm_idle_compact_process_task: the declared-state phrase skips the notes-save turn and sends /compact directly"
+  ) || exit 1
+}
+
+test_no_marker_declared_state_ignored_when_pane_unsafe() {
+  (
+    local dir log marker
+    dir=$(new_dir sm-declared-unsafe)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 5 'paused: awaiting compaction before validation'
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    log="$dir/sends.log"; : > "$log"
+    fm_busy_classify() { printf 'busy claude-hook'; }
+    fm_backend_composer_state() { printf 'empty'; }
+    stub_recording_send "$log"
+
+    fm_idle_compact_process_task "$dir/state" t1 30
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    [ ! -e "$marker" ] || fail "the declared-state fast path must still respect the live safety gate"
+    [ ! -s "$log" ] || fail "a busy pane must never be sent anything, declared state or not"
+    pass "fm_idle_compact_process_task: the declared-state fast path still defers to the live safety gate"
+  ) || exit 1
+}
+
+test_settling_declared_rings_worker_on_done() {
+  (
+    local dir log marker
+    dir=$(new_dir sm-declared-ring)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    fm_idle_compact_marker_write "$marker" phase=settling "settle_epoch=1" declared=1
+
+    FM_IDLE_COMPACT_SETTLE_SECS=1 fm_idle_compact_process_task "$dir/state" t1 30
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
+      || fail "past the settle window a declared episode must still advance to phase=done"
+    [ "$(wc -l < "$log")" = 1 ] || fail "exactly one ring message must go out on the declared settle->done transition"
+    grep -q 'compacted - start the validation run now' "$log" \
+      || fail "the ring message must tell the worker to start the validation run now"
+    pass "fm_idle_compact_process_task: a declared episode rings the worker with an inbox message once it settles to phase=done"
+  ) || exit 1
+}
+
+test_settling_non_declared_never_rings_worker() {
+  (
+    local dir log marker
+    dir=$(new_dir sm-nondeclared-ring)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: parked")
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    fm_idle_compact_marker_write "$marker" phase=settling "settle_epoch=1"
+
+    FM_IDLE_COMPACT_SETTLE_SECS=1 fm_idle_compact_process_task "$dir/state" t1 30
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
+      || fail "past the settle window an ordinary episode must still advance to phase=done"
+    [ ! -s "$log" ] || fail "an ordinary (non-declared) episode must never send a ring message on settle->done"
+    pass "fm_idle_compact_process_task: an ordinary episode settling to phase=done never rings the worker"
   ) || exit 1
 }
 
@@ -1022,6 +1145,9 @@ test_eligible_excludes_missing_meta
 test_eligible_excludes_non_wait_crew_states
 test_eligible_includes_every_wait_state
 
+test_eligible_declared_state_bypasses_threshold
+test_eligible_other_paused_text_still_gated_by_threshold
+
 test_safe_to_send_requires_exact_idle
 test_safe_to_send_requires_exact_empty_composer
 test_safe_to_send_true_when_idle_and_empty
@@ -1029,6 +1155,10 @@ test_safe_to_send_true_when_idle_and_empty
 test_no_marker_eligible_sends_save_and_marks_savesent
 test_no_marker_ineligible_creates_no_marker
 test_no_marker_unsafe_pane_defers_no_send
+test_no_marker_declared_state_skips_save_sends_compact_directly
+test_no_marker_declared_state_ignored_when_pane_unsafe
+test_settling_declared_rings_worker_on_done
+test_settling_non_declared_never_rings_worker
 test_savesent_no_turnended_yet_stays_savesent
 test_savesent_turnended_advanced_sends_compact_and_marks_settling
 test_savesent_turnended_advanced_but_unsafe_defers

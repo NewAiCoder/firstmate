@@ -41,6 +41,21 @@
 #   1. no marker: send a guarded message asking the crewmate to write its
 #      working state to data/<id>/precompact-notes.md, then record
 #      phase=save-sent with the current state/<id>.turn-ended signature.
+#      Declared-state fast path: when the task's own status log's LATEST
+#      line is the exact phrase `paused: awaiting compaction before
+#      validation` (a ship brief tells a no-mistakes worker to append that
+#      line and end its turn right after its implementation commit, before
+#      starting no-mistakes), fm_idle_compact_eligible ignores the
+#      idle-minutes threshold entirely - the worker has already declared
+#      itself done and waiting, so there is nothing to wait out - while every
+#      other exclusion (kind, harness, reconciled crew state) and the live
+#      safety gate still apply. This path also skips the notes-save turn
+#      (there is nothing left to save; the worker already stopped) and sends
+#      `/compact` directly, marking the episode `declared=1`. Once that
+#      episode settles to phase=done, the worker is rung with a durable
+#      inbox message ("compacted - start the validation run now") instead of
+#      being left silently idle, since it is waiting on firstmate to
+#      continue rather than on an external event.
 #   2. phase=save-sent: wait for a NEW turn-ended signature - proof the save
 #      turn actually completed, the same signal bin/fm-watch.sh's signal scan
 #      already trusts - then re-run the full eligibility check (the crew may
@@ -284,6 +299,18 @@ fm_idle_compact_activity_age() {  # <state> <task>
   fm_last_activity_age "$(date +%s)" "$@"
 }
 
+# True only when the task's own status log's latest line is the exact
+# declared-state phrase a no-mistakes ship brief tells a worker to append
+# right after its implementation commit, before starting no-mistakes. See
+# this file's header comment ("Declared-state fast path") for the full
+# contract; bin/fm-dod-lib.sh's no-mistakes block is the phrase's one owner.
+fm_idle_compact_declared_paused() {  # <state> <task>
+  local statusf="$1/$2.status" line
+  [ -f "$statusf" ] || return 1
+  line=$(tail -n 1 "$statusf" 2>/dev/null || true)
+  [ "$line" = 'paused: awaiting compaction before validation' ]
+}
+
 fm_idle_compact_eligible() {  # <state> <task> <threshold-minutes>
   local state=$1 task=$2 threshold_min=$3 statusf age crewline crewstate
 
@@ -293,8 +320,10 @@ fm_idle_compact_eligible() {  # <state> <task> <threshold-minutes>
 
   statusf="$state/$task.status"
   [ -f "$statusf" ] || return 1
-  age=$(fm_idle_compact_activity_age "$state" "$task")
-  [ "$age" -ge $(( threshold_min * 60 )) ] || return 1
+  if ! fm_idle_compact_declared_paused "$state" "$task"; then
+    age=$(fm_idle_compact_activity_age "$state" "$task")
+    [ "$age" -ge $(( threshold_min * 60 )) ] || return 1
+  fi
 
   # Explicit override passthrough, not ambient-environment reliance: FM_HOME
   # may be a computed default (never exported) rather than an inherited env
@@ -337,6 +366,21 @@ fm_idle_compact_save_message() {  # <task>
 fm_idle_compact_compact_message() {  # <task>
   printf '/compact Preserve the pointer to %s/%s/brief.md, the AGENTS.md status-append protocol, and the precompact notes at %s/%s/precompact-notes.md - re-read that notes file after compaction to resume.' \
     "$DATA" "$1" "$DATA" "$1"
+}
+
+# The declared-state fast path's /compact message: the worker already ended
+# its turn with nothing left to save, so this names the branch, the brief
+# path, and the delivery contract (mode) instead of a notes file.
+fm_idle_compact_declared_compact_message() {  # <state> <task>
+  local state=$1 task=$2 mode
+  mode=$(fm_meta_get "$state/$task.meta" mode 2>/dev/null) || mode=
+  [ -n "$mode" ] || mode=no-mistakes
+  printf '/compact Preserve your branch fm/%s, the pointer to %s/%s/brief.md, and the delivery contract (mode=%s) - you are about to be rung to start the no-mistakes validation run.' \
+    "$task" "$DATA" "$task" "$mode"
+}
+
+fm_idle_compact_ring_message() {
+  printf 'compacted - start the validation run now'
 }
 
 # Delivers through bin/fm-send.sh's verified type-once-retried-Enter path,
@@ -503,7 +547,7 @@ fm_idle_compact_advance_save_sent() {  # <state> <task> <marker> <threshold-minu
 # feature's own output is baked into the recorded signatures and never counts
 # as worker activity.
 fm_idle_compact_advance_settling() {  # <state> <task> <marker>
-  local state=$1 task=$2 marker=$3 settle_epoch settle_secs age
+  local state=$1 task=$2 marker=$3 settle_epoch settle_secs age declared
 
   fm_idle_compact_task_context "$state" "$task" || { rm -f "$marker"; return 0; }
   settle_epoch=$(fm_idle_compact_marker_field "$marker" settle_epoch)
@@ -514,9 +558,18 @@ fm_idle_compact_advance_settling() {  # <state> <task> <marker>
   age=$(( $(date +%s) - settle_epoch ))
   [ "$age" -ge "$settle_secs" ] || return 0
 
+  declared=$(fm_idle_compact_marker_field "$marker" declared)
+
   fm_idle_compact_marker_write "$marker" phase=done \
     "status_sig=$(fm_idle_compact_status_sig "$state" "$task")" \
     "pane_sig=$(fm_idle_compact_pane_sig "$FM_IDLE_COMPACT_BACKEND" "$FM_IDLE_COMPACT_TARGET" "$FM_IDLE_COMPACT_LABEL")"
+
+  # The declared-state fast path leaves the worker waiting on firstmate, not
+  # on an external event - ring it once, right at the settling->done
+  # transition, so it never sits idle past its own compaction.
+  if [ "$declared" = 1 ]; then
+    fm_idle_compact_send "$state" "$task" "$(fm_idle_compact_ring_message)"
+  fi
   return 0
 }
 
@@ -575,6 +628,18 @@ fm_idle_compact_process_task() {  # <state> <task> <threshold-minutes>
   fm_idle_compact_safe_to_send "$state" "$task" || return 0
 
   cur_turnended=$(fm_idle_compact_turnended_sig "$state" "$task")
+
+  if fm_idle_compact_declared_paused "$state" "$task"; then
+    # Nothing left to save: the worker already stopped for exactly this
+    # reason. Skip the notes-save turn and send /compact directly.
+    fm_idle_compact_send "$state" "$task" "$(fm_idle_compact_declared_compact_message "$state" "$task")" || return 0
+    fm_idle_compact_marker_write "$marker" phase=settling \
+      "settle_epoch=$(date +%s)" \
+      "baseline_turnended=$cur_turnended" \
+      "declared=1"
+    return 0
+  fi
+
   fm_idle_compact_send "$state" "$task" "$(fm_idle_compact_save_message "$task")" || return 0
   fm_idle_compact_marker_write "$marker" phase=save-sent \
     "sent_epoch=$(date +%s)" \
