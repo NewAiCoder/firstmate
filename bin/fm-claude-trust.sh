@@ -171,17 +171,34 @@ PROJ_COMMON=$(common_dir_of "$PROJ_REAL") || true
 [ -n "$PROJ_COMMON" ] || refuse "project '$PROJ_REAL' is not inside a git repository"
 [ "$WT_COMMON" = "$PROJ_COMMON" ] || refuse "'$WT_REAL' is not a worktree of project '$PROJ_REAL'"
 
-# <project> must itself be the primary checkout - its own git dir must equal
-# the common dir - because that is exactly the path Claude Code's own git-root
-# canonicalization collapses every linked worktree to. Writing the
-# external-imports flags anywhere else would silently reproduce the bug this
-# script exists to close: the flags would land at a key the running worker
-# never consults.
+# The external-imports flags must land on the primary checkout - its own git
+# dir equals the common dir - because that is exactly the path Claude Code's
+# own git-root canonicalization collapses every linked worktree to. When
+# <project> is itself a linked worktree (a secondmate home spawned from,
+# rather than as, the primary checkout), refusing outright would wedge a
+# relaunch that is otherwise perfectly valid: PROJ_COMMON already IS that
+# primary checkout's own git dir (git's git-common-dir answer never changes
+# by which worktree asks), so the checkout is derived structurally from it -
+# its parent directory in the standard non-bare, non-GIT_DIR-overridden
+# layout this script already requires elsewhere - and verified, never
+# assumed: the candidate's own resolved git dir must equal PROJ_COMMON, the
+# same primary-checkout definition used below, or this refuses rather than
+# guess.
 PROJ_GIT_DIR=$(git -C "$PROJ_REAL" rev-parse --absolute-git-dir 2>/dev/null) || true
 [ -n "$PROJ_GIT_DIR" ] || refuse "project '$PROJ_REAL' has no resolvable git directory"
 PROJ_GIT_DIR=$(real_dir "$PROJ_GIT_DIR") || true
 [ -n "$PROJ_GIT_DIR" ] || refuse "project '$PROJ_REAL' has an unresolvable git directory"
-[ "$PROJ_GIT_DIR" = "$PROJ_COMMON" ] || refuse "project '$PROJ_REAL' is itself a linked worktree, not the primary checkout"
+if [ "$PROJ_GIT_DIR" = "$PROJ_COMMON" ]; then
+  PROJ_CANON=$PROJ_REAL
+else
+  PROJ_CANON=$(real_dir "$(dirname -- "$PROJ_COMMON")") || true
+  [ -n "$PROJ_CANON" ] \
+    || refuse "project '$PROJ_REAL' is a linked worktree whose primary checkout could not be resolved"
+  CANON_GIT_DIR=$(git -C "$PROJ_CANON" rev-parse --absolute-git-dir 2>/dev/null) || true
+  CANON_GIT_DIR=$(real_dir "${CANON_GIT_DIR:-}") || true
+  [ -n "$CANON_GIT_DIR" ] && [ "$CANON_GIT_DIR" = "$PROJ_COMMON" ] \
+    || refuse "project '$PROJ_REAL' is a linked worktree whose primary checkout could not be resolved"
+fi
 
 # The store write needs node, and a missing interpreter refuses like every other
 # failure here. Degrading instead would launch a worker straight into the dialog
@@ -237,7 +254,7 @@ fi
 # or none of it - there is no state where the worktree entry is fresh and the
 # project entry stale, or the other way round.
 FLAG_KEYS='["hasTrustDialogAccepted","hasClaudeMdExternalIncludesApproved","hasClaudeMdExternalIncludesWarningShown"]'
-if ! node - "$STORE" "$WT_REAL" "$PROJ_REAL" "$FLAG_KEYS" <<'NODE'
+if ! node - "$STORE" "$WT_REAL" "$PROJ_CANON" "$FLAG_KEYS" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -324,8 +341,8 @@ console.error(`error: ${store} did not retain trust for ${worktree} and ${projec
 process.exit(1);
 NODE
 then
-  refuse "could not record trust for '$WT_REAL' and project '$PROJ_REAL' in '$STORE'"
+  refuse "could not record trust for '$WT_REAL' and project '$PROJ_CANON' in '$STORE'"
 fi
 
 echo "trusted: $WT_REAL"
-echo "trusted (project root): $PROJ_REAL"
+echo "trusted (project root): $PROJ_CANON"

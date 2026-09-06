@@ -317,22 +317,27 @@ test_worktree_subdirectory_is_refused() {
   pass "fm-claude-trust.sh: refuses a subdirectory of the worktree"
 }
 
-# <project> must itself be the primary checkout - the write target the
-# external-imports flags depend on is only correct when <project>'s own git
-# dir equals its common dir. A <project> that is itself a linked worktree
-# would have the flags land at the wrong key, silently reproducing the bug.
-test_project_argument_that_is_itself_a_worktree_is_refused() {
+# The write target the external-imports flags depend on is only correct when
+# it names the primary checkout. When <project> is itself a linked worktree
+# (a secondmate home spawned from, rather than as, the primary checkout),
+# writing the flags at that worktree's own path would land them at a key
+# Claude Code's git-root canonicalization never reads, silently reproducing
+# the bug this script exists to close - so this resolves the argument
+# structurally to its primary checkout instead of refusing it.
+test_project_argument_that_is_itself_a_worktree_resolves_to_the_primary_checkout() {
   local rec out proj_wt
   rec=$(make_case nested-project)
   read_case "$rec"
   proj_wt="$CASE_DIR/proj-wt"
   git -C "$PROJ" worktree add --quiet -b wt-proj-wt "$proj_wt"
   out=$(run_trust "$CONFIG" "$WT" "$proj_wt")
-  expect_code 1 $? "a project argument that is itself a linked worktree must be refused: $out"
-  assert_contains "$out" "is itself a linked worktree, not the primary checkout" \
-    "the refusal did not name the nested-worktree project argument"
-  assert_not_trusted "$CONFIG/.claude.json" "$WT" "the worktree was trusted despite the invalid project argument"
-  pass "fm-claude-trust.sh: refuses a project argument that is itself a linked worktree"
+  expect_code 0 $? "a project argument that is itself a linked worktree must resolve to its primary checkout: $out"
+  assert_contains "$out" "$PROJ" "the outcome did not name the resolved primary checkout"
+  assert_all_flags "$CONFIG/.claude.json" "$PROJ" \
+    "the resolved primary checkout did not carry all three flags"
+  assert_not_trusted "$CONFIG/.claude.json" "$proj_wt" \
+    "the linked worktree argument itself was recorded as the project root"
+  pass "fm-claude-trust.sh: a project argument that is itself a linked worktree resolves to the primary checkout"
 }
 
 test_unrelated_store_content_is_preserved() {
@@ -525,7 +530,7 @@ test_non_git_directory_is_refused
 test_missing_directory_is_refused
 test_foreign_project_worktree_is_refused
 test_worktree_subdirectory_is_refused
-test_project_argument_that_is_itself_a_worktree_is_refused
+test_project_argument_that_is_itself_a_worktree_resolves_to_the_primary_checkout
 test_unrelated_store_content_is_preserved
 test_symlinked_store_to_a_foreign_owned_target_is_refused
 test_symlinked_store_to_an_owned_target_is_accepted
