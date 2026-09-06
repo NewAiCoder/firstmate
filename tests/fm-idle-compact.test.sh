@@ -781,7 +781,10 @@ test_savesent_timeout_abandons_without_compact() {
     [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
       || fail "a save turn that never completes must be abandoned to phase=done past the timeout"
     [ ! -s "$log" ] || fail "an abandoned episode must never send /compact"
-    pass "fm_idle_compact_process_task: a save turn that never completes is abandoned past FM_IDLE_COMPACT_SAVE_TIMEOUT_SECS, without ever sending /compact"
+    case "$(fm_idle_compact_marker_field "$marker" settle_epoch)" in
+      ''|*[!0-9]*) fail "the abandon path must stamp a numeric settle_epoch so the ring backstop scopes to this episode" ;;
+    esac
+    pass "fm_idle_compact_process_task: a save turn that never completes is abandoned past FM_IDLE_COMPACT_SAVE_TIMEOUT_SECS, without ever sending /compact, and stamps settle_epoch"
   ) || exit 1
 }
 
