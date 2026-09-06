@@ -1350,17 +1350,70 @@ test_tick_delivers_the_ring_through_the_shared_sweep() {
 # bin/fm-watch.sh's main loop (attended) and bin/fm-supervise-daemon.sh's
 # housekeeping (away mode) must reach the ring through the SAME entry point, or
 # a worker's recovery would depend on whether the captain happened to be away -
-# which is exactly the condition both 2026-09-06 lanes ran under.
-test_both_supervision_paths_call_the_shared_tick() {
+# which is exactly the condition both 2026-09-06 lanes ran under. Both tests
+# below source the real production file and drive its actual call site (the
+# single-argument fm_idle_compact_tick form bin/fm-watch.sh's loop uses, and
+# the housekeeping() function bin/fm-supervise-daemon.sh's tick literally is)
+# against a declared-pause fixture, and assert the ring lands - not that the
+# call text merely appears in the file.
+
+test_watch_tick_call_site_delivers_the_ring_end_to_end() {
   (
-    local f
-    for f in "$ROOT/bin/fm-watch.sh" "$ROOT/bin/fm-supervise-daemon.sh"; do
-      grep -q 'fm_idle_compact_tick' "$f" \
-        || fail "$(basename "$f") must call the shared fm_idle_compact_tick entry point"
-      grep -q 'fm-idle-compact.sh' "$f" \
-        || fail "$(basename "$f") must source bin/fm-idle-compact.sh rather than reimplement the sweep"
-    done
-    pass "attended and away supervision both drive the ring through the one shared fm_idle_compact_tick"
+    local dir log marker
+    dir=$(new_dir watch-tick-ring)
+    FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" . "$ROOT/bin/fm-watch.sh"
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600 \
+      'paused: awaiting compaction before validation (commit 3985d693a, 1292 changed lines, over-cap accepted)'
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    printf '30\n' > "$dir/config/idle-compact"
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+
+    # The exact call bin/fm-watch.sh's poll loop makes: fm_idle_compact_tick
+    # "$STATE" || true, against the STATE/CONFIG this sourcing resolved.
+    fm_idle_compact_tick "$STATE" || true
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'settling' ] \
+      || fail "bin/fm-watch.sh's tick call site must send /compact and record phase=settling"
+    rm -f "$dir/state/.idle-compact-last-sweep"
+    FM_IDLE_COMPACT_SETTLE_SECS=0 fm_idle_compact_tick "$STATE" || true
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
+      || fail "bin/fm-watch.sh's tick call site must land the episode at phase=done"
+    grep -q 'compacted - start the validation run now' "$log" \
+      || fail "bin/fm-watch.sh's own fm_idle_compact_tick call site must deliver the ring"
+    pass "bin/fm-watch.sh: its poll-loop fm_idle_compact_tick call delivers the ring end to end"
+  ) || exit 1
+}
+
+test_supervise_daemon_housekeeping_delivers_the_ring_end_to_end() {
+  (
+    local dir log marker
+    dir=$(new_dir daemon-tick-ring)
+    FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" . "$ROOT/bin/fm-supervise-daemon.sh"
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600 \
+      'paused: awaiting compaction before validation (commit 3985d693a, 1292 changed lines, over-cap accepted)'
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    printf '30\n' > "$dir/config/idle-compact"
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+
+    # The real away-mode call site: housekeeping() step (4), the exact
+    # condition both 2026-09-06 lanes ran under.
+    housekeeping "$dir/state"
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'settling' ] \
+      || fail "bin/fm-supervise-daemon.sh's housekeeping() must send /compact and record phase=settling"
+    rm -f "$dir/state/.idle-compact-last-sweep"
+    FM_IDLE_COMPACT_SETTLE_SECS=0 housekeeping "$dir/state"
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
+      || fail "bin/fm-supervise-daemon.sh's housekeeping() must land the episode at phase=done"
+    grep -q 'compacted - start the validation run now' "$log" \
+      || fail "bin/fm-supervise-daemon.sh's own housekeeping() call site must deliver the ring"
+    pass "bin/fm-supervise-daemon.sh: away-mode housekeeping() delivers the ring end to end"
   ) || exit 1
 }
 
@@ -1490,7 +1543,8 @@ test_does_not_absorb_while_a_sweep_holds_the_lock
 test_tick_absent_config_is_grep_provably_inert
 test_tick_present_config_sweeps_eligible_task
 test_tick_delivers_the_ring_through_the_shared_sweep
-test_both_supervision_paths_call_the_shared_tick
+test_watch_tick_call_site_delivers_the_ring_end_to_end
+test_supervise_daemon_housekeeping_delivers_the_ring_end_to_end
 test_tick_sweep_due_gating
 test_tick_held_sweep_lock_defers_whole_sweep
 
