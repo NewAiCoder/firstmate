@@ -991,6 +991,81 @@ SH
   pass "fm-lint.sh bounds a slow file by time and keeps linting the rest"
 }
 
+# Regression: `ulimit -v` caps virtual address space, not resident memory, and
+# ShellCheck's GHC runtime reserves a very large virtual region up front
+# regardless of a file's real memory use. An earlier version of the per-file
+# memory ceiling used `ulimit -v` and CI caught it killing nearly every real
+# file with "out of memory" under the default ceiling - including small ones
+# like bin/fm-control.sh - the exact false-positive the fixture-based timeout
+# test above cannot see, because its stub "shellcheck" never actually runs the
+# real GHC binary. This test runs the real pinned ShellCheck against a real,
+# ordinary-size file from this repo under the real default ceiling.
+test_real_shellcheck_passes_a_healthy_file_under_the_default_ceiling() {
+  if ! pinned_ready; then
+    pass "SKIP (ShellCheck $REQUIRED not resolved): default-ceiling false-positive regression check"
+    return
+  fi
+  local healthy out rc
+  healthy="$ROOT/bin/fm-control.sh"
+  [ -f "$healthy" ] || fail "fixture file missing: $healthy"
+  rc=0
+  out=$(env -u FM_LINT_FILE_MEM_KB "$LINT" "$healthy" 2>&1) || rc=$?
+  # bin/fm-control.sh has ordinary ShellCheck findings (SC1091, SC2034), so
+  # exit 1 is expected; only a memory-ceiling misclassification is a failure.
+  [ "$rc" -le 1 ] \
+    || fail "fm-lint.sh reported more than an ordinary lint failure for a healthy file"$'\n'"$out"
+  case "$out" in
+    *"memory ceiling"*)
+      fail "fm-lint.sh misreported a healthy real file as hitting the per-file memory ceiling"$'\n'"$out"
+      ;;
+  esac
+  pass "fm-lint.sh lints a real healthy file cleanly under the default per-file memory ceiling"
+}
+
+# GitHub-hosted runners typically have no usable `systemd --user` session, so
+# the memory-ceiling probe (fm_lint_resolve_mem_mechanism) must fail there
+# deterministically, once, and never be mistaken for a lint failure. A fake
+# `uname -s` reporting a non-Linux OS forces that probe false on every host
+# regardless of whether this host actually has systemd (same technique as
+# fm-agent-memory-spawn.test.sh's "not-available" case for the sibling
+# systemd-scope feature), so this test is not opportunistic like pinned_ready.
+test_mem_ceiling_probe_failure_falls_back_to_timeout_only() {
+  if ! pinned_ready; then
+    pass "SKIP (ShellCheck $REQUIRED not resolved): memory-ceiling probe fallback check"
+    return
+  fi
+  local tmp fakebin f out rc notice_count
+  tmp=$(fm_test_tmproot fm-lint-no-systemd)
+  fakebin=$(fm_fakebin "$tmp")
+  fm_install_stub_uname "$fakebin"
+  local -a fixtures=()
+  for f in small1 small2 small3; do
+    printf '#!/usr/bin/env bash\nprintf ok\n' > "$tmp/$f.sh"
+    fixtures+=("$tmp/$f.sh")
+  done
+
+  rc=0
+  out=$(FM_TEST_UNAME_S=Darwin PATH="$fakebin:$PATH" "$LINT" "${fixtures[@]}" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] \
+    || fail "a forced-unavailable memory ceiling probe was itself treated as a lint failure"$'\n'"$out"
+  assert_contains "$out" "no systemd --user session on this host" \
+    "fm-lint.sh did not report the memory ceiling as unavailable when the probe fails"
+  case "$out" in
+    *"memory ceiling"*"KiB per-file memory ceiling"*)
+      fail "fm-lint.sh reported a memory-ceiling hit while the mechanism was unavailable"$'\n'"$out"
+      ;;
+  esac
+  # The probe is resolved once per shard PROCESS, not once per file: canonical
+  # lint always shards into at most two logical shards regardless of jobs, so
+  # 3 fixture files can produce at most 2 notices - strictly fewer than one
+  # per file - and any more would mean the probe re-ran per file instead of
+  # being cached for the process's lifetime.
+  notice_count=$(printf '%s\n' "$out" | grep -c "no systemd --user session on this host")
+  [ "$notice_count" -ge 1 ] && [ "$notice_count" -le 2 ] \
+    || fail "the unavailable-mechanism notice printed $notice_count times for 3 files across at most 2 shards, expected once per shard process, not once per file"$'\n'"$out"
+  pass "fm-lint.sh probes the memory-ceiling mechanism once per shard and falls back to timeout-only when systemd --user is unavailable"
+}
+
 test_seeded_module_boundary_parity() {
   if ! pinned_ready; then
     pass "SKIP (ShellCheck $REQUIRED not resolved): seeded source-boundary parity check"
@@ -1083,6 +1158,8 @@ test_clean_fixture_passes
 test_jobs_are_deterministic_and_complete
 test_worker_trees_stop_on_signal
 test_per_file_bound_reports_and_continues
+test_real_shellcheck_passes_a_healthy_file_under_the_default_ceiling
+test_mem_ceiling_probe_failure_falls_back_to_timeout_only
 test_seeded_module_boundary_parity
 test_changed_mode_lints_only_the_changed_file
 test_ci_forces_full_lint_even_with_empty_diff
