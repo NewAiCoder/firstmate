@@ -329,7 +329,7 @@ fm_lint_run_one_file() {  # <mem-kb> <timeout-s> <output-file> <path> -- <shellc
   done
 
   if [ "$has_external" -eq 1 ] && fm_lint_is_ceiling_failure "$timed_out" "$rc" "$current"; then
-    fallback_args=(--exclude=SC1091,SC2329)
+    fallback_args=(--exclude=SC1091 --exclude=SC2329)
     for arg in "${shellcheck_args[@]}"; do
       [ "$arg" = --external-sources ] || fallback_args+=("$arg")
     done
