@@ -66,6 +66,10 @@ ROOT="$(cd "$SELF_DIR/.." && pwd)"
 cd "$ROOT" || exit 1
 
 FM_LINT_WORKER_SHELLCHECK_PID=
+# The pseudo exit status `wait` reports for a process that a signal
+# interrupted (128 + the signal number), used to detect when the per-file
+# deadline alarm raced a file's own clean exit and masked its real status.
+FM_LINT_ALRM_WAIT_STATUS=$((128 + $(kill -l ALRM)))
 # shellcheck disable=SC2329 # Registered by the private worker's signal traps.
 fm_lint_worker_stop() {
   [ -n "$FM_LINT_WORKER_SHELLCHECK_PID" ] || return 0
@@ -135,7 +139,17 @@ fm_lint_run_one_file() {  # <mem-kb> <timeout-s> <output-file> <path> -- <shellc
   while :; do
     wait "$FM_LINT_WORKER_SHELLCHECK_PID"
     rc=$?
-    kill -0 "$FM_LINT_WORKER_SHELLCHECK_PID" 2>/dev/null || break
+    if ! kill -0 "$FM_LINT_WORKER_SHELLCHECK_PID" 2>/dev/null; then
+      if [ "$rc" -eq "$FM_LINT_ALRM_WAIT_STATUS" ]; then
+        # The deadline alarm fired within microseconds of the file's own
+        # clean exit, so `wait` reported the alarm-interrupted pseudo-status
+        # instead of ShellCheck's real one; the process is gone but its exit
+        # status is still pending for us to reap, so re-collect it.
+        wait "$FM_LINT_WORKER_SHELLCHECK_PID" 2>/dev/null
+        rc=$?
+      fi
+      break
+    fi
     if [ $((SECONDS - start)) -ge "$timeout_s" ]; then
       timed_out=1
       kill -TERM "$FM_LINT_WORKER_SHELLCHECK_PID" 2>/dev/null || true
