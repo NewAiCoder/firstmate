@@ -42,24 +42,18 @@
 #      working state to data/<id>/precompact-notes.md, then record
 #      phase=save-sent with the current state/<id>.turn-ended signature.
 #      Declared-state fast path: when the task's own status log's LATEST
-#      line is the exact phrase `paused: awaiting compaction before
+#      line STARTS WITH the phrase `paused: awaiting compaction before
 #      validation` (a ship brief tells a no-mistakes worker to append that
 #      line and end its turn right after its implementation commit, before
-#      starting no-mistakes), fm_idle_compact_eligible ignores the
-#      idle-minutes threshold entirely - the worker has already declared
-#      itself done and waiting, so there is nothing to wait out - while every
-#      other exclusion (kind, harness, reconciled crew state) and the live
-#      safety gate still apply. This path also skips the notes-save turn
-#      (there is nothing left to save; the worker already stopped) and sends
-#      `/compact` directly, marking the episode `declared=1`. Once that
-#      episode settles to phase=done, the worker is rung with a durable
-#      inbox message ("compacted - start the validation run now") instead of
-#      being left silently idle, since it is waiting on firstmate to
-#      continue rather than on an external event. That ring is a live send
-#      like every other one in this file, so it waits for the same live
-#      safety gate first; when unsafe, the marker stays in phase=settling so
-#      a later sweep retries instead of typing into a pane that may be
-#      mid-turn.
+#      starting no-mistakes, and to note its measured lane size with it, so
+#      trailing detail after the phrase is the norm rather than the
+#      exception), fm_idle_compact_eligible ignores the idle-minutes
+#      threshold entirely - the worker has already declared itself done and
+#      waiting, so there is nothing to wait out - while every other exclusion
+#      (kind, harness, reconciled crew state) and the live safety gate still
+#      apply. This path also skips the notes-save turn (there is nothing left
+#      to save; the worker already stopped) and sends `/compact` directly,
+#      marking the episode `declared=1`.
 #   2. phase=save-sent: wait for a NEW turn-ended signature - proof the save
 #      turn actually completed, the same signal bin/fm-watch.sh's signal scan
 #      already trusts - then re-run the full eligibility check (the crew may
@@ -76,6 +70,31 @@
 #      append or new pane activity) ends the episode, replacing the marker
 #      with a phase=reset activity stamp so the next episode is evaluated
 #      fresh - and only after a full new idle window measured from that stamp.
+#      An UNCHANGED phase=done marker runs the ring backstop below.
+#
+# The ring, and why it is not a live send. A worker whose latest status line
+# declares the compaction pause is waiting on firstmate, not on an external
+# event, so it is rung once at the settling->done transition with
+# "compacted - start the validation run now". Two properties keep that ring
+# from being lost, both learned from 2026-09-06, when pt-checkin-fidelity-lane3
+# and pt-checkin-fidelity-lane8 were compacted, never rung, and sat idle 35 to
+# 60 minutes until firstmate rang them by hand:
+#   - it is DURABLE. It goes out on fm-send's inbox plane as a record the
+#     watcher's re-ring ladder covers, so it is never gated behind a live pane
+#     verdict, and the episode advances to phase=done only once that record
+#     exists. Gating a durable record behind fm_idle_compact_safe_to_send was
+#     the deferred-and-never-retried seam.
+#   - it does not depend on WHICH path the episode took. The declared=1 marker
+#     field rings, and so does a status log that still declares the pause at
+#     the transition - the ordinary save-then-compact path leaves exactly the
+#     same waiting worker, and that is the path both 2026-09-06 lanes took,
+#     because their status lines carried the trailing detail the brief asks for
+#     and the old whole-line equality test missed them.
+# fm_idle_compact_ring_backstop is the last line of defence: an unchanged
+# phase=done marker older than FM_IDLE_COMPACT_RING_BACKSTOP_SECS whose status
+# still declares the pause, with no ring record in the inbox, gets one re-send
+# and one log line. It is the only thing in this file that logs, because it
+# firing at all means the primary path missed.
 #
 # The two turns an episode induces (the notes save and the /compact) would
 # each otherwise surface as an actionable turn-end wake. fm_idle_compact_absorbs_signal
@@ -83,10 +102,11 @@
 # this owner about; see its own comment for the conditions it requires.
 #
 # Every message is delivered through bin/fm-send.sh exactly as any other
-# steer, so the type-once-verified-Enter submission and delivery confirmation
-# are unchanged; this file never calls a backend primitive or raw tmux
-# command directly, and a deferred or failed attempt at any phase is silent
-# routine - retried on the next sweep, never a captain-facing escalation.
+# steer - the notes save and the `/compact` command on its typed plane, the
+# ring on its durable inbox plane - so this file never calls a backend
+# primitive or raw tmux command directly, and a deferred or failed attempt at
+# any phase is silent routine, retried on the next sweep and never a
+# captain-facing escalation.
 #
 # CLI (mainly for standalone testing/inspection; production callers source
 # this file and call fm_idle_compact_tick directly):
@@ -112,9 +132,22 @@ DATA="${FM_DATA_OVERRIDE:-${DATA:-$FM_HOME/data}}"
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-task-inbox-lib.sh
+. "$SCRIPT_DIR/fm-task-inbox-lib.sh"
 
 FM_IDLE_COMPACT_DEFAULT_MINUTES=15
 FM_IDLE_COMPACT_CREW_STATE_BIN="${FM_CREW_STATE_BIN:-$SCRIPT_DIR/fm-crew-state.sh}"
+
+# The declared-state phrase a no-mistakes ship brief tells the worker to append
+# right after its implementation commit (bin/fm-dod-lib.sh is the phrase's one
+# owner). Matched as a PREFIX of the status line, never as the whole line: the
+# same brief asks the worker to note its measured lane size, so the line that
+# actually lands in production routinely carries trailing detail
+# ("paused: awaiting compaction before validation (commit 3985d693a, 1292
+# changed lines, over-cap accepted)"). Requiring the whole line to equal the
+# phrase is what silently dropped two workers onto the ordinary episode path
+# overnight on 2026-09-06; see the ring contract below.
+FM_IDLE_COMPACT_DECLARED_PHRASE='paused: awaiting compaction before validation'
 
 # --- config parsing ---------------------------------------------------------
 
@@ -312,7 +345,11 @@ fm_idle_compact_declared_paused() {  # <state> <task>
   local statusf="$1/$2.status" line
   [ -f "$statusf" ] || return 1
   line=$(tail -n 1 "$statusf" 2>/dev/null || true)
-  [ "$line" = 'paused: awaiting compaction before validation' ]
+  case "$line" in
+    "$FM_IDLE_COMPACT_DECLARED_PHRASE") return 0 ;;
+    "$FM_IDLE_COMPACT_DECLARED_PHRASE"[!A-Za-z0-9]*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 fm_idle_compact_eligible() {  # <state> <task> <threshold-minutes>
@@ -396,6 +433,84 @@ fm_idle_compact_ring_message() {
 fm_idle_compact_send() {  # <state> <task> <message>
   FM_ROOT_OVERRIDE="$FM_ROOT" FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$1" \
     "$SCRIPT_DIR/fm-send.sh" "$2" "$3" >/dev/null 2>&1
+}
+
+# The ring is a DURABLE record, not typed text. fm-send routes plain text to
+# the task's steering inbox (bin/fm-task-inbox-lib.sh), where the watcher's
+# re-ring ladder covers a swallowed doorbell and escalates a worker that never
+# acknowledges. So unlike the notes-save message and the /compact command -
+# both of which must reach the harness's own parser through the live typed
+# plane - the ring deliberately does NOT wait on fm_idle_compact_safe_to_send:
+# a busy pane is exactly the case the durable record was designed for, and
+# gating the record behind a live pane verdict reintroduced the silent-defer
+# seam this feature exists to close. Success here means the record exists.
+fm_idle_compact_ring_worker() {  # <state> <task>
+  fm_idle_compact_send "$1" "$2" "$(fm_idle_compact_ring_message)"
+}
+
+# True when this task's inbox already holds the ring, unhandled or acknowledged.
+# The backstop below asks before re-sending, so a worker never receives the same
+# instruction twice because a marker field was lost.
+fm_idle_compact_ring_recorded() {  # <state> <task>
+  local state=$1 task=$2 dir f ring
+  ring=$(fm_idle_compact_ring_message)
+  for dir in "$(fm_task_inbox_dir "$state" "$task")" \
+             "$(fm_task_inbox_handled_dir "$state" "$task")"; do
+    [ -d "$dir" ] || continue
+    for f in "$dir"/*.msg; do
+      [ -e "$f" ] || continue
+      [ "$(fm_task_inbox_body "$f" 2>/dev/null)" = "$ring" ] || continue
+      return 0
+    done
+  done
+  return 1
+}
+
+# Size-capped, this feature's own; the watcher's state/.watch-triage.log stays
+# exclusively the watcher's absorbed-wake debug log (bin/fm-watch-arm.sh).
+# Only the backstop writes here: an ordinary episode stays silent routine.
+fm_idle_compact_log() {  # <state> <line>
+  local f="$1/.idle-compact.log" max sz
+  max=${FM_IDLE_COMPACT_LOG_MAX_BYTES:-65536}
+  case "$max" in ''|*[!0-9]*|0) max=65536 ;; esac
+  printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$2" >> "$f" 2>/dev/null || return 0
+  sz=$(wc -c < "$f" 2>/dev/null | tr -d '[:space:]')
+  case "$sz" in ''|*[!0-9]*) return 0 ;; esac
+  if [ "$sz" -ge "$max" ]; then
+    tail -n 200 "$f" > "$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f" 2>/dev/null
+    rm -f "$f.tmp" 2>/dev/null || true
+  fi
+  return 0
+}
+
+# Last line of defence for the one worker state that cannot recover itself: an
+# episode that reached phase=done while the worker's own latest status line
+# still declares the compaction pause. That worker is waiting on firstmate, not
+# on an external event, so a ring that was never sent (a pre-fix episode that
+# took the ordinary path) or never recorded (a failed enqueue at the
+# settling->done transition) leaves it idle indefinitely - 35 to 60 minutes,
+# twice, on 2026-09-06.
+#
+# Fires at most once per episode and only on all four conditions: the status
+# line still declares the pause, this marker has not already backstopped, the
+# phase=done marker is at least FM_IDLE_COMPACT_RING_BACKSTOP_SECS old (so a
+# freshly-rung worker that simply has not taken its turn yet is left alone),
+# and the inbox holds no ring record at all. Unlike an ordinary episode step it
+# logs, because a backstop firing means the primary path missed.
+fm_idle_compact_ring_backstop() {  # <state> <task> <marker>
+  local state=$1 task=$2 marker=$3 grace age
+  fm_idle_compact_declared_paused "$state" "$task" || return 0
+  [ -z "$(fm_idle_compact_marker_field "$marker" ring_backstop)" ] || return 0
+  grace=${FM_IDLE_COMPACT_RING_BACKSTOP_SECS:-600}
+  case "$grace" in ''|*[!0-9]*) grace=600 ;; esac
+  age=$(fm_path_age "$marker")
+  [ "$age" -ge "$grace" ] || return 0
+  ! fm_idle_compact_ring_recorded "$state" "$task" || return 0
+  fm_idle_compact_ring_worker "$state" "$task" || return 0
+  fm_idle_compact_marker_set "$marker" ring_backstop "$(date +%s)" || true
+  fm_idle_compact_log "$state" \
+    "$task: ring backstop re-sent - phase=done for ${age}s, status still declares the compaction pause, no ring record in the inbox"
+  return 0
 }
 
 # --- induced-turn absorption -------------------------------------------------
@@ -564,15 +679,17 @@ fm_idle_compact_advance_settling() {  # <state> <task> <marker>
 
   declared=$(fm_idle_compact_marker_field "$marker" declared)
 
-  # The declared-state fast path leaves the worker waiting on firstmate, not
-  # on an external event - ring it once, right at the settling->done
-  # transition, so it never sits idle past its own compaction. The ring is a
-  # live send like every other one in this file, so it waits for the same
-  # safety gate first; when unsafe, the marker stays in phase=settling so a
-  # later sweep retries instead of typing into a pane that may be mid-turn.
-  if [ "$declared" = 1 ]; then
-    fm_idle_compact_safe_to_send "$state" "$task" || return 0
-    fm_idle_compact_send "$state" "$task" "$(fm_idle_compact_ring_message)" || return 0
+  # A worker waiting on firstmate - not on an external event - is rung once,
+  # right at the settling->done transition, so it never sits idle past its own
+  # compaction. The declared=1 marker field is not the only trigger: an episode
+  # that took the ORDINARY save-then-compact path over a worker whose status
+  # still declares the compaction pause leaves exactly the same worker waiting,
+  # which is how both 2026-09-06 lanes went unrung. The status log is therefore
+  # re-read here and either signal rings. The ring is a durable inbox record, so
+  # this transition advances to phase=done only once that record exists; a failed
+  # enqueue keeps the marker in phase=settling for a later sweep.
+  if [ "$declared" = 1 ] || fm_idle_compact_declared_paused "$state" "$task"; then
+    fm_idle_compact_ring_worker "$state" "$task" || return 0
   fi
 
   fm_idle_compact_marker_write "$marker" phase=done \
@@ -608,6 +725,7 @@ fm_idle_compact_process_task() {  # <state> <task> <threshold-minutes>
         cur_status=$(fm_idle_compact_status_sig "$state" "$task")
         cur_pane_sig=$(fm_idle_compact_pane_sig "$FM_IDLE_COMPACT_BACKEND" "$FM_IDLE_COMPACT_TARGET" "$FM_IDLE_COMPACT_LABEL")
         if [ "$cur_status" = "$status_sig" ] && [ "$cur_pane_sig" = "$pane_sig" ]; then
+          fm_idle_compact_ring_backstop "$state" "$task" "$marker"
           return 0
         fi
         # The episode is over: a new status append or new pane activity ends
