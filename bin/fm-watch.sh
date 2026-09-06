@@ -154,7 +154,6 @@ mkdir -p "$STATE"
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
 WATCHER_DOWNTIME_MARKER="$STATE/.watcher-down"
-WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-300}}
 # The singleton-lock acquisition, EXIT trap, and the blocking supervision loop
 # all live below the source guard at the very bottom of this file (see "Main
 # entry"). Sourcing this file for unit tests therefore loads the functions -
@@ -179,6 +178,19 @@ fi
 # turn-ended signature, annotation staleness checks, and guarded bookkeeping writes.
 
 POLL=${FM_POLL:-15}                   # seconds between cycles
+# The liveness beacon is touched once per cycle, immediately before the
+# terminal wait below (event_wait_or_sleep) as well as at the top of the next
+# one, so a healthy cycle's beacon can legitimately age up to POLL seconds
+# between touches. A fixed 300s default grace stops correctly bounding
+# staleness once POLL itself reaches or exceeds it - see
+# docs/turnend-guard.md "Guard grace and the poll cadence" and the identical
+# derivation in bin/fm-claude-stop-autoarm.sh (duplicated here so this
+# script's own pre-acquisition staleness check is correct even when it is
+# started directly, without going through that hook).
+GUARD_GRACE_POLL_MARGIN=60
+DEFAULT_GUARD_GRACE=$((POLL + GUARD_GRACE_POLL_MARGIN))
+[ "$DEFAULT_GUARD_GRACE" -ge 300 ] || DEFAULT_GUARD_GRACE=300
+WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-$DEFAULT_GUARD_GRACE}}
 HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${FM_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
 CHECK_INTERVAL=${FM_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps
@@ -2102,6 +2114,16 @@ EOF
       triage_log "absorbed heartbeat (no captain-relevant change)"
     fi
   fi
+
+  # Refresh the liveness beacon immediately before the terminal wait, not only
+  # at the top of the next cycle. Everything above (home-summary refresh,
+  # secondmate reconcile ticks, idle-compact, procevent, checks, the signal
+  # scan and its SIGNAL_GRACE linger) runs between the top-of-loop touch and
+  # this point and can itself take real time; touching here removes that
+  # preamble from the gap between touches, so a healthy cycle's beacon age
+  # never exceeds the terminal wait itself (see docs/turnend-guard.md
+  # "Guard grace and the poll cadence" for why that gap still matters).
+  touch "$STATE/.last-watcher-beat"
 
   # Terminal wait: a bounded native-event wait for push-capable homes (herdr),
   # else the blind poll sleep. See event_wait_or_sleep.

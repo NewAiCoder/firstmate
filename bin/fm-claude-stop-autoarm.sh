@@ -73,7 +73,21 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
-GRACE=${FM_GUARD_GRACE:-300}
+# fm-watch.sh touches the liveness beacon once per cycle, immediately before
+# its terminal wait, so a healthy watcher's beacon can legitimately age up to
+# FM_POLL seconds between touches (docs/turnend-guard.md "Guard grace and the
+# poll cadence"). A fixed 300s default grace stops correctly bounding
+# staleness once FM_POLL itself reaches or exceeds it: this hook would then
+# call an actively-waiting, perfectly healthy watcher stale at the edge of
+# every full wait. Derive the default from the configured poll instead, with
+# a fixed margin for scheduling slack, and never drop below the historical
+# 300s floor for the common short-poll case.
+POLL_FOR_GRACE=${FM_POLL:-15}
+case "$POLL_FOR_GRACE" in ''|*[!0-9]*) POLL_FOR_GRACE=15 ;; esac
+GUARD_GRACE_POLL_MARGIN=60
+DEFAULT_GUARD_GRACE=$((POLL_FOR_GRACE + GUARD_GRACE_POLL_MARGIN))
+[ "$DEFAULT_GUARD_GRACE" -ge 300 ] || DEFAULT_GUARD_GRACE=300
+GRACE=${FM_GUARD_GRACE:-$DEFAULT_GUARD_GRACE}
 OWNER_LOCK="$STATE/.claude-autoarm.lock"
 FAILURE_NOTICE="$STATE/.claude-autoarm-failure-notified"
 FAILURE_ALARM="$STATE/.claude-autoarm-failure-alarmed"
@@ -216,10 +230,13 @@ while [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ]; do
   fi
   attempt=$((attempt + 1))
   OUT=$(mktemp "$STATE/.claude-autoarm-output.XXXXXX") || OUT=
+  # Export the resolved GRACE (operator override or the poll-derived default
+  # computed above) so the arm wrapper - and the watcher it may start - judge
+  # beacon staleness with the exact same value this hook just judged it with.
   if [ -n "$OUT" ]; then
-    "$SCRIPT_DIR/fm-watch-arm.sh" >"$OUT" 2>&1 || true
+    FM_GUARD_GRACE="$GRACE" "$SCRIPT_DIR/fm-watch-arm.sh" >"$OUT" 2>&1 || true
   else
-    "$SCRIPT_DIR/fm-watch-arm.sh" >/dev/null 2>&1 || true
+    FM_GUARD_GRACE="$GRACE" "$SCRIPT_DIR/fm-watch-arm.sh" >/dev/null 2>&1 || true
   fi
 
   # AFK may have appeared mid-cycle: the daemon owns triage now, so suppress
