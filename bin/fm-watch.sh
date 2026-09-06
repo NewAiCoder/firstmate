@@ -188,8 +188,9 @@ POLL=${FM_POLL:-15}                   # seconds between cycles
 # script's own pre-acquisition staleness check is correct even when it is
 # started directly, without going through that hook).
 GUARD_GRACE_POLL_MARGIN=60
-case "$POLL" in ''|*[!0-9]*) POLL=15 ;; esac
-DEFAULT_GUARD_GRACE=$((POLL + GUARD_GRACE_POLL_MARGIN))
+POLL_FOR_GRACE=$POLL
+case "$POLL_FOR_GRACE" in ''|*[!0-9]*) POLL_FOR_GRACE=15 ;; esac
+DEFAULT_GUARD_GRACE=$((POLL_FOR_GRACE + GUARD_GRACE_POLL_MARGIN))
 [ "$DEFAULT_GUARD_GRACE" -ge 300 ] || DEFAULT_GUARD_GRACE=300
 WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-$DEFAULT_GUARD_GRACE}}
 HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat scans
