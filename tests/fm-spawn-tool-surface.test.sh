@@ -45,11 +45,19 @@ EOF
 
 write_brief "$TMP/none.md" ""
 GOT=$(fm_brief_tools "$TMP/none.md")
-[ -z "$GOT" ] && echo "ok - no tools line means no extras" || { echo "FAIL - expected empty, got '$GOT'"; FAIL=1; }
+if [ -z "$GOT" ]; then
+  echo "ok - no tools line means no extras"
+else
+  echo "FAIL - expected empty, got '$GOT'"; FAIL=1
+fi
 
 write_brief "$TMP/browser.md" "tools: browser context7"
 GOT=$(fm_brief_tools "$TMP/browser.md")
-[ "$GOT" = "browser context7" ] && echo "ok - extras parsed" || { echo "FAIL - expected 'browser context7', got '$GOT'"; FAIL=1; }
+if [ "$GOT" = "browser context7" ]; then
+  echo "ok - extras parsed"
+else
+  echo "FAIL - expected 'browser context7', got '$GOT'"; FAIL=1
+fi
 
 write_brief "$TMP/bogus.md" "tools: browser nonsense"
 GOT=$(fm_brief_tools "$TMP/bogus.md" 2>/dev/null)
