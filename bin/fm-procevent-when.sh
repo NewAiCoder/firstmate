@@ -160,7 +160,14 @@ positive_int() { case "${1-}" in ''|*[!0-9]*) return 1 ;; 0) return 1 ;; *) retu
 
 env_assignment_valid() {  # <NAME=VALUE>
   local LC_ALL=C
-  [[ "${1-}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]
+  [[ "${1-}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || return 1
+  case "${1%%=*}" in
+    PATH|IFS|ENV|BASH_ENV|SHELLOPTS|BASHOPTS|GLOBIGNORE| \
+    LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_INSERT_LIBRARIES|DYLD_LIBRARY_PATH| \
+    PERL5LIB|PERL5OPT|PYTHONPATH|PYTHONHOME|NODE_OPTIONS|NODE_PATH|RUBYOPT|RUBYLIB| \
+    GCONV_PATH|LOCPATH|GIT_SSH|GIT_SSH_COMMAND)
+      return 1 ;;
+  esac
 }
 
 positive_number() {
