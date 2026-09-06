@@ -40,11 +40,27 @@ read -r LINES FILES <<< "$(fm_diff_size /does/not/exist "$BASE")"
 say "a missing worktree yields zeros, never a failure" "0" "$LINES"
 
 DB="$TMP/usage.sqlite"
+# Recorded schema lives at ~/.claude/telemetry/store.py, a personal harness
+# file outside this repo that a fresh CI checkout never has. This test only
+# needs the one table fm-lane-size-record.sh writes to, so it creates that
+# table itself instead of depending on host state a portable test can't rely on.
 python3 - "$DB" <<'PY'
-import sys, os
-sys.path.insert(0, os.path.expanduser("~/.claude/telemetry"))
-import store
-store.open_store(sys.argv[1]).close()
+import sqlite3, sys
+conn = sqlite3.connect(sys.argv[1])
+conn.execute("""
+    CREATE TABLE IF NOT EXISTS lanes (
+        host          TEXT    NOT NULL,
+        pr_url        TEXT    NOT NULL,
+        project       TEXT,
+        task_id       TEXT,
+        changed_lines INTEGER NOT NULL,
+        files_changed INTEGER NOT NULL,
+        opened_at     TEXT    NOT NULL,
+        PRIMARY KEY (host, pr_url)
+    )
+""")
+conn.commit()
+conn.close()
 PY
 TELEMETRY_DB="$DB" bash "$ROOT/bin/fm-lane-size-record.sh" \
     demo-task "$WT" "$BASE" "https://github.com/o/r/pull/7"
