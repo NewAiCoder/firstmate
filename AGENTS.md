@@ -145,7 +145,7 @@ state/               runtime records and signals; gitignored
   .watch-triage.log  watcher's absorbed-wake debug log (size-capped); never relied on, safe to delete
   .last-watcher-beat watcher liveness beacon, touched every poll (including while absorbing benign wakes); guard scripts read it
   .subsuper-* .supervise-daemon.*   sub-supervisor internals; never touch
-  .idle-compact-* .idle-compact.lock   opt-in idle-compact episode markers (also the post-episode activity stamp the next idle window is measured from), sweep stamp, and sweep lock shared by watcher and away-mode daemon (bin/fm-idle-compact.sh); never touch
+  .idle-compact-* .idle-compact.lock .idle-compact.log   opt-in idle-compact episode markers (also the post-episode activity stamp the next idle window is measured from), sweep stamp, sweep lock shared by watcher and away-mode daemon, and the size-capped log the ring backstop alone writes (bin/fm-idle-compact.sh); never touch
 .no-mistakes/        local validation state and evidence; gitignored
 ```
 

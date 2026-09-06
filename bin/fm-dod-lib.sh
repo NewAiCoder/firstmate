@@ -234,7 +234,7 @@ EOF
 # Definition of done
 Delivery contract: mode=no-mistakes
 The task is complete only when committed on your branch.
-Right after that implementation commit lands, append \`paused: awaiting compaction before validation\` to the status file and stop for this turn - do NOT run \`no-mistakes axi run\` yet. A worker cannot self-trigger compaction (\`/compact\` is a terminal built-in, not a tool you can invoke), so firstmate's idle-compact watcher reads that exact line, compacts your context while it is still warm, then rings you with a durable inbox message telling you to start the validation run - resume from that ring instead of waiting on a reply.
+Right after that implementation commit lands, append \`paused: awaiting compaction before validation\` to the status file and stop for this turn - do NOT run \`no-mistakes axi run\` yet. A worker cannot self-trigger compaction (\`/compact\` is a terminal built-in, not a tool you can invoke), so firstmate's idle-compact watcher reads that line - the phrase must START the line, and any detail you want to note (your measured lane size, the commit) may follow it - compacts your context while it is still warm, then rings you with a durable inbox message telling you to start the validation run - resume from that ring instead of waiting on a reply.
 
 Before your FIRST \`no-mistakes axi run\`, measure this lane:
 \`bash $FM_ROOT/bin/fm-diff-size-check.sh .\`
