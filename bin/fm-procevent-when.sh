@@ -35,7 +35,13 @@
 #                                          assignments are part of the
 #                                          hash-bound spec, and the action
 #                                          executable itself stays argv[0], so
-#                                          its bytes remain trust-bound.
+#                                          its bytes remain trust-bound. NAME is
+#                                          refused outright when it could hijack
+#                                          an interpreter or loader instead of
+#                                          configuring the action (PATH,
+#                                          LD_PRELOAD, PYTHONPATH, and similar -
+#                                          see env_assignment_valid for the
+#                                          exact list).
 #              --repeat                    keep watching after a successful
 #                                          fire instead of ending there (see
 #                                          REPEAT MODE below)

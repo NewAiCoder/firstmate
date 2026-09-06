@@ -419,6 +419,20 @@ if when "$H" arm bad-env --action-env 'not a name=x' \
   fail "an assignment with an invalid NAME must be refused"
 fi
 assert_grep 'action-env' "$TMP_ROOT/bad-env.err" "the refusal names the offending option"
+# A shell-safe NAME is not enough: an interpreter/loader-hijacking name must be
+# refused too, or the argv[0] trust binding is worthless for any action that is
+# itself a `#!/usr/bin/env`-shebang script.
+if when "$H" arm hijack-env --action-env 'LD_PRELOAD=/tmp/evil.so' \
+  --condition true --action "$ENVACT" "$ENVLOG" 2>"$TMP_ROOT/hijack-env.err"; then
+  fail "an interpreter/loader-hijacking NAME must be refused"
+fi
+assert_grep 'action-env' "$TMP_ROOT/hijack-env.err" "the LD_PRELOAD refusal names the offending option"
+assert_absent "$H/state/when/when-hijack-env.spec" "a refused LD_PRELOAD assignment is never armed"
+if when "$H" arm hijack-path --action-env 'PATH=/tmp/evil-bin' \
+  --condition true --action "$ENVACT" "$ENVLOG" 2>"$TMP_ROOT/hijack-path.err"; then
+  fail "a PATH action-env assignment must be refused"
+fi
+assert_grep 'action-env' "$TMP_ROOT/hijack-path.err" "the PATH refusal names the offending option"
 when "$H" arm action-env --interval 0.1 --stable 1 \
   --action-env "FM_TEST_HOME=$H" \
   --condition true --action "$ENVACT" "$ENVLOG" >/dev/null
