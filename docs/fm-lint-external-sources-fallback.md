@@ -6,6 +6,7 @@ This file tracks which tracked files are currently known to need that fallback a
 
 Measured 2026-09-06 against ShellCheck 0.11.0 with full (non-`--fast`) analysis, on the then-default 1 GiB ceiling.
 A file's own body has no lint defect in any of these cases; the cost is entirely `--external-sources` following the sourced-file graph.
+Dropping `--external-sources` on its own is not enough to finish clean, though: it also makes ShellCheck SC1091 every `. "$SCRIPT_DIR/..."` line (it can no longer follow them, `# shellcheck source=` directives notwithstanding) and SC2329 any function a sourced file calls back into (a test's mock override of a production function, the common shape here). Neither is a defect in the file's own body, so the fallback excludes both codes (`bin/fm-lint.sh`'s `fm_lint_run_one_file`); a genuine SC2034/etc. finding in the file's own body still fails it.
 
 ## Never stabilized (still growing past 4 GiB / 180s in isolation)
 

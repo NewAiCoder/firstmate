@@ -293,6 +293,23 @@ fm_lint_is_ceiling_failure() {  # <timed_out> <rc> <output-file>
 # docs/fm-lint-external-sources-fallback.md tracks which tracked files are
 # currently known to need this so a newly pathological file stays visible in
 # review instead of silently blending into routine lint noise.
+#
+# The fallback also excludes SC1091 and SC2329: both are guaranteed artifacts
+# of dropping `--external-sources` rather than findings about the file's own
+# body. Every `. "$SCRIPT_DIR/..."` line SC1091-fires the instant ShellCheck
+# stops following it (confirmed 2026-09-06: bin/fm-teardown.sh's own sourced
+# libraries are already annotated with `# shellcheck source=`, and it still
+# fires without `-x`, because that directive only resolves the dynamic path,
+# not whether ShellCheck follows it), and SC2329 false-fires on any function a
+# sourced file calls back into (a test's mock override of a production
+# function, the normal shape here) since the caller is no longer in view.
+# Excluding them per-line instead would mean one `# shellcheck disable=SC1091`
+# above every source line in every file this fallback ever reaches - the exact
+# repetitive machinery this single flag replaces. SC2034 stays enforced: it
+# catches genuine unused-variable defects (a bare `for i in ...` never reading
+# `i`) as often as it catches the same cross-file blind spot, so a real
+# instance of the latter (docs/fm-lint-external-sources-fallback.md's own
+# example) is suppressed at its one call site instead.
 fm_lint_run_one_file() {  # <mem-kb> <timeout-s> <output-file> <path> -- <shellcheck-arg>...
   local mem_kb=$1 timeout_s=$2 output=$3 path=$4 rc timed_out current arg has_external=0
   local fallback_current fallback_rc fallback_timed_out
@@ -312,7 +329,7 @@ fm_lint_run_one_file() {  # <mem-kb> <timeout-s> <output-file> <path> -- <shellc
   done
 
   if [ "$has_external" -eq 1 ] && fm_lint_is_ceiling_failure "$timed_out" "$rc" "$current"; then
-    fallback_args=()
+    fallback_args=(--exclude=SC1091,SC2329)
     for arg in "${shellcheck_args[@]}"; do
       [ "$arg" = --external-sources ] || fallback_args+=("$arg")
     done
