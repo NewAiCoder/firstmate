@@ -506,12 +506,14 @@ test_no_mistakes_dod_carries_quota_efficiency_rules() {
   assert_grep "resolved: run returned" "$brief" \
     "no-mistakes DOD must tell the worker to resolve the pause once the run parks"
 
-  assert_grep "Default convergence after the second review round" "$brief" \
-    "no-mistakes DOD must state the default convergence rule"
-  assert_grep "Deferred findings" "$brief" \
-    "no-mistakes DOD must name the PR-body section for findings not auto-applied"
-  assert_grep "This brief's own \`# Task\` section may override that default" "$brief" \
-    "no-mistakes DOD must let the task text override the convergence default"
+  assert_grep "Round cap, with a severity escape" "$brief" \
+    "no-mistakes DOD must state the round-cap rule (D4)"
+  assert_grep "After round 3" "$brief" \
+    "no-mistakes DOD must state where the cap takes effect (D4)"
+  assert_grep "Those are never deferred, at any round number, for any reason" "$brief" \
+    "no-mistakes DOD must state the severity escape has no ceiling (D4)"
+  assert_grep "Deferred pipeline findings" "$brief" \
+    "no-mistakes DOD must name the rolling deferred-findings issue (D4)"
 
   assert_grep "Pass an absolute path as the PATH argument of \`grep\`, \`sed\`, \`find\`, and \`cat\`" "$brief" \
     "no-mistakes DOD must require absolute paths for grep/sed/find/cat"
@@ -525,8 +527,8 @@ test_no_mistakes_dod_carries_quota_efficiency_rules() {
     assert_present "$brief" "$id: brief was not scaffolded"
     assert_no_grep "paused: awaiting compaction before validation" "$brief" \
       "$id: the declared-state compaction rule is no-mistakes-only"
-    assert_no_grep "Default convergence after the second review round" "$brief" \
-      "$id: the convergence-default rule is no-mistakes-only"
+    assert_no_grep "Round cap, with a severity escape" "$brief" \
+      "$id: the round-cap rule is no-mistakes-only"
   done
 
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-quota-scout1 some-proj --scout >/dev/null 2>&1
@@ -534,8 +536,8 @@ test_no_mistakes_dod_carries_quota_efficiency_rules() {
   assert_present "$brief" "scout brief was not scaffolded"
   assert_no_grep "paused: awaiting compaction before validation" "$brief" \
     "scout brief must not carry the ship-only declared-state compaction rule"
-  assert_no_grep "Default convergence after the second review round" "$brief" \
-    "scout brief must not carry the ship-only convergence-default rule"
+  assert_no_grep "Round cap, with a severity escape" "$brief" \
+    "scout brief must not carry the ship-only round-cap rule"
 
   pass "fm-brief.sh: no-mistakes DOD carries the quota-efficiency worker rules, absent from direct-PR/local-only/scout"
 }
