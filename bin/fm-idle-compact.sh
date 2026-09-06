@@ -487,9 +487,11 @@ _fm_idle_compact_inbox_record_at() {  # <record-path>
 # enqueue genuinely failed - silently reintroducing the never-rung failure
 # this backstop exists to close. <episode-epoch>, when given, scopes the match
 # to records whose `at=` timestamp is no older than the current episode's own
-# settle_epoch (set once, at the settling->done transition this backstop's
-# caller is examining), so an earlier episode's ring never satisfies this
-# check. Absent or unparseable data - a legacy marker predating settle_epoch,
+# settle_epoch (stamped on every phase=done write this backstop's caller is
+# examining - carried forward from the settling->done transition, or set
+# fresh by the save-sent timeout's direct abandon to done), so an earlier
+# episode's ring never satisfies this check. Absent or unparseable data - a
+# legacy marker predating settle_epoch,
 # or a record missing/malformed `at=` - falls back to the unscoped match
 # rather than risk the reverse failure (never ringing at all).
 fm_idle_compact_ring_recorded() {  # <state> <task> [episode-epoch]
