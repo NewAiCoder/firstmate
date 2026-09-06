@@ -109,6 +109,7 @@
 # Ownership, durable capture, publication, restart recovery, and the handled
 # acknowledgement all belong to bin/fm-procevent.sh; this adapter owns only the
 # condition->action semantics above.
+
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
