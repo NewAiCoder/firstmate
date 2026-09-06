@@ -15,16 +15,21 @@ Busy hooks verified 2026-07-28 on Claude Code 2.1.220.
 
 ## Workspace trust
 
-Claude gates a folder it has never seen behind an interactive workspace-trust dialog, so every fresh task worktree would hit it.
+Claude gates a folder it has never seen behind an interactive workspace-trust dialog (titled "Quick safety check: Is this a project you created or one you trust?"), so every fresh task worktree would hit it.
 `--dangerously-skip-permissions` does not cover that gate: `claude --help` records that the dialog is skipped only in non-interactive mode, through `-p` or a non-TTY stdout, and a crewmate pane is interactive.
 A ship or scout spawn therefore pre-registers the worktree before launch, and the dialog does not appear.
-`../../../bin/fm-claude-trust.sh` records `hasTrustDialogAccepted` for that worktree path in `${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json`, and `../../../bin/fm-spawn.sh` refuses the spawn when the write fails rather than launching a worker that would wedge.
 
-Never try to answer the trust dialog with a key.
-Firstmate's key plane carries only Enter, Escape, and C-c with no arrow navigation, so it cannot move a dialog's selection at all, and the observed rendering starts on `No, exit`, which means a sent Enter ends the session instead of accepting.
-A visible trust dialog means pre-registration did not take effect, so inspect the store and the spawn's error output rather than sending keys.
+A second, separate dialog - "Allow external CLAUDE.md file imports?" - renders whenever a loaded CLAUDE.md chain reaches outside the project tree, which every crewmate's does through the captain's own `~/.claude/CLAUDE.md` importing `~/.claude/RTK.md`.
+`--setting-sources project,local` (the minimal worker tool surface) does not suppress it either, and it gates the pane exactly like the trust dialog: cursor on "No, disable external imports", no way to move the selection from firstmate's steering plane.
 
-The once-per-machine bypass-permissions confirmation is a separate dialog, scoped to the machine rather than the path, and pre-registration does not address it.
+`../../../bin/fm-claude-trust.sh` pre-approves both dialogs for a spawn in one pass, recording `hasTrustDialogAccepted`, `hasClaudeMdExternalIncludesApproved`, and `hasClaudeMdExternalIncludesWarningShown` for both the worktree and its primary checkout in `${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json`.
+The why-two-entries mechanism lives in the script's own header comment, which is the one owner for that contract; the fact worth repeating here is that `../../../bin/fm-spawn.sh` refuses the spawn when either flag fails to land, rather than launching a worker that would wedge on one of the dialogs.
+
+Never try to answer either dialog with a key.
+Firstmate's key plane carries only Enter, Escape, and C-c with no arrow navigation, so it cannot move a dialog's selection at all, and both dialogs render with the cursor on their declining option, which means a sent Enter ends the session instead of accepting.
+A visible trust or external-imports dialog means pre-registration did not take effect, so inspect the store and the spawn's error output rather than sending keys - `fm-control.sh <id> interrupt` delivers Escape, which dismisses whichever of the two is on screen without answering it, and is the safe way to clear a wedged pane for inspection.
+
+The once-per-machine bypass-permissions confirmation is a third, separate dialog, scoped to the machine rather than the path, and pre-registration does not address it.
 Never send Enter to that one either: it was observed rendering in the same shape as the trust dialog, with the selection on `No, exit` and the footer `Enter to confirm . Esc to cancel`, so Enter ends the session rather than accepting.
 Firstmate cannot move a selection with Enter, Escape, and C-c alone, so it cannot accept this dialog at all, and an operator accepts it once per machine instead.
 Inspect the pane to identify which dialog is on screen, and report it rather than answering it.

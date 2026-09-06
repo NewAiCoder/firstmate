@@ -67,6 +67,21 @@ assert_store_value() {  # <store> <expected-json> <msg> <key...>
   [ "$actual" = "$expected" ] || fail "$msg (expected $expected, got $actual)"
 }
 
+# assert_all_flags <store> <path> <msg>: all three registered flags - trust,
+# external-includes approved, external-includes warning-shown - are true on
+# the project entry at <path>. The external-imports flags are the ones the
+# running app reads only from the PROJECT-root entry, never the worktree
+# entry, so this is what actually proves the dialog is suppressed.
+assert_all_flags() {
+  local store=$1 key=$2 msg=$3
+  node -e '
+    const j=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8"));
+    const e=(j.projects||{})[process.argv[2]]||{};
+    const flags=["hasTrustDialogAccepted","hasClaudeMdExternalIncludesApproved","hasClaudeMdExternalIncludesWarningShown"];
+    process.exit(flags.every((f)=>e[f]===true)?0:1);
+  ' "$store" "$key" || fail "$msg"
+}
+
 # A PATH carrying the tools the scope test needs but no node, so the
 # missing-interpreter path is exercised without disturbing the real PATH.
 node_free_path() {  # <case-dir> -> a bin dir holding the script's own tools but no node
@@ -90,6 +105,44 @@ test_fresh_worktree_is_trusted() {
   [ -z "$(find "$CONFIG" -maxdepth 1 -name '.claude.json.fm-trust.*' -print -quit)" ] \
     || fail "a temporary store file was left behind in the config directory"
   pass "fm-claude-trust.sh: a fresh task worktree is trusted"
+}
+
+# The external-imports dialog is read only from the PROJECT-root entry, never
+# the worktree entry (Claude Code's own git-root canonicalization collapses
+# every linked worktree to its primary checkout for that check, with no
+# ancestor-walk fallback the way the trust check has). A registration that
+# only wrote the worktree entry left that dialog showing; this proves both
+# entries carry all three flags after one registration.
+test_fresh_worktree_also_approves_the_project_root() {
+  local rec out
+  rec=$(make_case fresh-project)
+  read_case "$rec"
+  out=$(run_trust "$CONFIG" "$WT" "$PROJ")
+  expect_code 0 $? "a fresh linked worktree must be trusted: $out"
+  assert_contains "$out" "$PROJ" "registration did not report the project root it also trusted"
+  assert_all_flags "$CONFIG/.claude.json" "$WT" \
+    "the worktree entry did not carry all three flags"
+  assert_all_flags "$CONFIG/.claude.json" "$PROJ" \
+    "the project-root entry did not carry all three flags"
+  pass "fm-claude-trust.sh: a fresh registration also approves the project-root entry"
+}
+
+# The project-root entry is the same store the launching user's interactive
+# claude sessions read and write (it is usually already present, carrying
+# unrelated keys such as allowedTools or MCP config), so preservation must
+# hold there exactly as it holds for the worktree entry.
+test_project_root_entry_preserves_other_keys() {
+  local rec store
+  rec=$(make_case project-preserve)
+  read_case "$rec"
+  store="$CONFIG/.claude.json"
+  cat > "$store" <<JSON
+{"hasCompletedOnboarding":true,"projects":{"$PROJ":{"hasTrustDialogAccepted":false,"allowedTools":["Read"]}}}
+JSON
+  run_trust "$CONFIG" "$WT" "$PROJ" >/dev/null || fail "registration failed against an existing project entry"
+  assert_all_flags "$store" "$PROJ" "the project-root entry was not fully approved"
+  assert_store_value "$store" '["Read"]' "the project entry's unrelated settings were lost" projects "$PROJ" allowedTools
+  pass "fm-claude-trust.sh: preserves unrelated keys on the project-root entry"
 }
 
 test_registration_is_idempotent() {
@@ -262,6 +315,24 @@ test_worktree_subdirectory_is_refused() {
   assert_contains "$out" "is not a worktree root" "the refusal did not name the non-root path"
   assert_not_trusted "$CONFIG/.claude.json" "$sub" "a worktree subdirectory was trusted"
   pass "fm-claude-trust.sh: refuses a subdirectory of the worktree"
+}
+
+# <project> must itself be the primary checkout - the write target the
+# external-imports flags depend on is only correct when <project>'s own git
+# dir equals its common dir. A <project> that is itself a linked worktree
+# would have the flags land at the wrong key, silently reproducing the bug.
+test_project_argument_that_is_itself_a_worktree_is_refused() {
+  local rec out proj_wt
+  rec=$(make_case nested-project)
+  read_case "$rec"
+  proj_wt="$CASE_DIR/proj-wt"
+  git -C "$PROJ" worktree add --quiet -b wt-proj-wt "$proj_wt"
+  out=$(run_trust "$CONFIG" "$WT" "$proj_wt")
+  expect_code 1 $? "a project argument that is itself a linked worktree must be refused: $out"
+  assert_contains "$out" "is itself a linked worktree, not the primary checkout" \
+    "the refusal did not name the nested-worktree project argument"
+  assert_not_trusted "$CONFIG/.claude.json" "$WT" "the worktree was trusted despite the invalid project argument"
+  pass "fm-claude-trust.sh: refuses a project argument that is itself a linked worktree"
 }
 
 test_unrelated_store_content_is_preserved() {
@@ -441,6 +512,8 @@ test_claude_spawn_pretrusts_its_worktree_and_reaches_the_brief() {
 }
 
 test_fresh_worktree_is_trusted
+test_fresh_worktree_also_approves_the_project_root
+test_project_root_entry_preserves_other_keys
 test_registration_is_idempotent
 test_primary_checkout_is_refused
 test_cdpath_cannot_defeat_the_primary_checkout_refusal
@@ -452,6 +525,7 @@ test_non_git_directory_is_refused
 test_missing_directory_is_refused
 test_foreign_project_worktree_is_refused
 test_worktree_subdirectory_is_refused
+test_project_argument_that_is_itself_a_worktree_is_refused
 test_unrelated_store_content_is_preserved
 test_symlinked_store_to_a_foreign_owned_target_is_refused
 test_symlinked_store_to_an_owned_target_is_accepted
