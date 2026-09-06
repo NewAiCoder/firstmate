@@ -1,0 +1,11 @@
+=== Simulating the JLAP 2026-09-05 incident: bin/fm-teardown.sh-style pathological file hangs ShellCheck ===
+Command: FM_LINT_FILE_TIMEOUT=3 bin/fm-lint.sh /tmp/tmp.PevW1UXpLU/hung.sh /tmp/tmp.PevW1UXpLU/normal-a.sh /tmp/tmp.PevW1UXpLU/normal-b.sh
+
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+fm-lint.sh: /tmp/tmp.PevW1UXpLU/hung.sh exceeded the 3s per-file lint timeout (FM_LINT_FILE_TIMEOUT) even after the --external-sources fallback; reported as a lint failure, continuing with the next file.
+ok: linted /tmp/tmp.PevW1UXpLU/normal-b.sh
+ok: linted /tmp/tmp.PevW1UXpLU/normal-a.sh
+
+Exit code: 124
+Elapsed seconds: 16 (bounded by FM_LINT_FILE_TIMEOUT=3, not the fake shellcheck's sleep 60)

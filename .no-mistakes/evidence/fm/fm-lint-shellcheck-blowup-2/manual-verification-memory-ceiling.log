@@ -1,0 +1,12 @@
+=== Real memory-ceiling enforcement: a file whose ShellCheck invocation allocates 300MB is bounded by a 32MB systemd-scope MemoryMax and reported, run continues ===
+Host: systemd --user session confirmed available on this test host (real cgroup enforcement, not the timeout-only fallback).
+Command: FM_LINT_FILE_MEM_KB=32768 FM_LINT_FILE_TIMEOUT=20 bin/fm-lint.sh /tmp/tmp.Givm9DEDG8/hog.sh /tmp/tmp.Givm9DEDG8/normal.sh
+
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+/home/dvids/.no-mistakes/worktrees/8856de648a6a/01M1TPCA2VFYYAT05R90KMP4X6/bin/fm-lint.sh: line 221: 748530 Killed                     systemd-run --user --scope --quiet -p "MemoryMax=${mem_kb}K" -p MemorySwapMax=0 -- "$FM_LINT_SHELLCHECK" "${shellcheck_args[@]}" -- "$path" >> "$output" 2>&1
+/home/dvids/.no-mistakes/worktrees/8856de648a6a/01M1TPCA2VFYYAT05R90KMP4X6/bin/fm-lint.sh: line 221: 748563 Killed                     systemd-run --user --scope --quiet -p "MemoryMax=${mem_kb}K" -p MemorySwapMax=0 -- "$FM_LINT_SHELLCHECK" "${shellcheck_args[@]}" -- "$path" >> "$output" 2>&1
+fm-lint.sh: /tmp/tmp.Givm9DEDG8/hog.sh hit the 32768 KiB per-file memory ceiling (FM_LINT_FILE_MEM_KB) and was killed, even after the --external-sources fallback; reported as a lint failure, continuing with the next file.
+ok: linted /tmp/tmp.Givm9DEDG8/normal.sh
+
+Exit code: 137
