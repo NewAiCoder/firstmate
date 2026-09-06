@@ -307,6 +307,13 @@ A weekly small-batch lane clears it. The telemetry store's `v_late_rounds` detec
 
 `bin/fm-lane-size-record.sh`, called best-effort from `bin/fm-pr-check.sh` at PR open, records the lane's changed-line and file counts into the telemetry store's `lanes` table, joined to rounds and tokens by project and task id, so the size-drives-rounds effect above is measured rather than asserted.
 
+## Per-file lint bounds (FM_LINT_FILE_TIMEOUT / FM_LINT_FILE_MEM_KB)
+
+`bin/fm-lint.sh` runs ShellCheck one file at a time and bounds each invocation by a wall-clock timeout (`FM_LINT_FILE_TIMEOUT`, a positive integer number of seconds, default `120`) and a memory ceiling (`FM_LINT_FILE_MEM_KB`, a positive integer number of KiB, default `1048576`, applied with `ulimit -v` in a subshell).
+A file that hits either bound is reported by name as a lint failure and the run moves on to the next file instead of stalling or growing without limit; a single pathological file (extended-analysis dataflow blowing up on a large or deeply-nested script) can no longer starve the host the way it did on 2026-09-05, when one `fm-lint` run sat 21 minutes in disk sleep at 2.7 GB resident and got an unrelated production build killed by the memory guard four times.
+Both variables are read fresh on every invocation and rejected (exit 2) if not a positive integer.
+`bin/fm-lint.sh`'s own header comment owns the exact per-file mechanism (a SIGALRM deadline and its interaction with the ambient-process-group signal cleanup `test_worker_trees_stop_on_signal` proves).
+
 ## Captain Preferences (data/captain.md / data/captain-shared.md)
 
 Domain-local preferences for one captain's fleet live locally in each home's `data/captain.md`; it is gitignored and printed in the session-start context digest after `data/projects.md` and optional `data/secondmates.md`.

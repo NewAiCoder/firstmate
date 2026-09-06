@@ -923,6 +923,74 @@ SH
   pass "jobs=1 and jobs=2 stop complete worker trees with and without telemetry"
 }
 
+# test_per_file_bound_reports_and_continues regresses the 2026-09-05 JLAP
+# incident: a single pathological file sat in disk sleep at 2.7 GB resident
+# under ShellCheck for 21 minutes, starving the host and getting an unrelated
+# production build killed by the memory guard four times. fm-lint.sh must
+# bound each file's ShellCheck invocation on its own and keep going, so a
+# slow file is reported as a named lint failure rather than a host outage.
+#
+# The fixture sizes are chosen so the greedy shard-balancing in fm-lint.sh
+# (largest weight first, alternating shards) puts big.sh alone in one shard
+# and slow.sh followed by normal.sh together in the other shard, in that
+# order - proving the continuation happens within a single shard's own
+# sequential file loop, not merely across independently-scheduled shards.
+test_per_file_bound_reports_and_continues() {
+  local tmp fakebin big slow normal linted_log out rc pad
+  tmp=$(fm_test_tmproot fm-lint-file-bound)
+  fakebin=$(fm_fakebin "$tmp")
+  big="$tmp/big.sh"
+  slow="$tmp/slow.sh"
+  normal="$tmp/normal.sh"
+  linted_log="$tmp/linted.log"
+  : > "$linted_log"
+
+  pad=$(printf '#%.0s' $(seq 1 220))
+  printf '#!/usr/bin/env bash\n# %s\nprintf ok\n' "$pad" > "$big"
+  pad=$(printf '#%.0s' $(seq 1 90))
+  printf '#!/usr/bin/env bash\n# %s\nprintf ok\n' "$pad" > "$slow"
+  printf '#!/usr/bin/env bash\nprintf ok\n' > "$normal"
+
+  cat > "$fakebin/shellcheck" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = --version ]; then
+  printf 'ShellCheck - shell script analysis tool\nversion: 0.11.0\n'
+  exit 0
+fi
+while [ "\$#" -gt 0 ] && [ "\$1" != -- ]; do
+  shift
+done
+[ "\$#" -eq 0 ] || shift
+path="\$1"
+case "\$path" in
+  *slow.sh)
+    trap 'exit 143' TERM
+    sleep "\${FM_TEST_SLOW_SLEEP:-30}"
+    exit 0
+    ;;
+  *)
+    printf '%s\n' "\$path" >> "$linted_log"
+    exit 0
+    ;;
+esac
+SH
+  chmod +x "$fakebin/shellcheck"
+
+  rc=0
+  out=$(PATH="$fakebin:$PATH" FM_LINT_JOBS=1 FM_LINT_FILE_TIMEOUT=2 \
+    "$LINT" "$big" "$slow" "$normal" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] \
+    || fail "a timed-out file did not fail the overall run"$'\n'"$out"
+  assert_contains "$out" "$slow" "the timed-out file was not named in the report"
+  assert_contains "$out" "FM_LINT_FILE_TIMEOUT" \
+    "the timeout report did not point at the overriding env var"
+  assert_grep "$normal" "$linted_log" \
+    "fm-lint.sh stopped after the slow file instead of continuing to the next fixture"
+  assert_grep "$big" "$linted_log" \
+    "fm-lint.sh did not lint the fixture in the other shard"
+  pass "fm-lint.sh bounds a slow file by time and keeps linting the rest"
+}
+
 test_seeded_module_boundary_parity() {
   if ! pinned_ready; then
     pass "SKIP (ShellCheck $REQUIRED not resolved): seeded source-boundary parity check"
@@ -1014,6 +1082,7 @@ test_ignores_ambient_shellcheck_opts
 test_clean_fixture_passes
 test_jobs_are_deterministic_and_complete
 test_worker_trees_stop_on_signal
+test_per_file_bound_reports_and_continues
 test_seeded_module_boundary_parity
 test_changed_mode_lints_only_the_changed_file
 test_ci_forces_full_lint_even_with_empty_diff

@@ -32,6 +32,15 @@
 # deterministic shard and root order after every worker finishes. FM_LINT_JOBS=1
 # runs the same shards serially with byte-identical diagnostics and exit selection.
 #
+# Each shard runs ShellCheck one file at a time, under a per-file wall-clock
+# timeout (FM_LINT_FILE_TIMEOUT, default 120 seconds) and a per-file memory
+# ceiling (FM_LINT_FILE_MEM_KB, default 1048576 KiB, applied with `ulimit -v`
+# in a subshell). A file that hits either limit is reported as a named lint
+# failure and the shard moves on to its next file, so one pathological file
+# (a huge here-doc or deep nesting defeating ShellCheck's extended analysis)
+# can never starve the host or block the rest of the run (mechanism and its
+# tradeoffs: fm_lint_run_one_file's own comment).
+#
 # Optional quiet telemetry writes one bounded TSV snapshot of content and source
 # graph identity, wall/CPU/RSS, shard load, and competing ShellCheck processes.
 #
@@ -44,6 +53,10 @@
 #   fm-lint.sh --required-version      print the ShellCheck pin
 #   fm-lint.sh --list-files            print the file set that would be linted
 #   fm-lint.sh --help                  print this usage
+#
+# Env:
+#   FM_LINT_FILE_TIMEOUT   per-file ShellCheck wall-clock timeout in seconds (default 120)
+#   FM_LINT_FILE_MEM_KB    per-file ShellCheck memory ceiling in KiB (default 1048576)
 set -u
 
 REQUIRED_SHELLCHECK=0.11.0
@@ -61,8 +74,107 @@ fm_lint_worker_stop() {
   FM_LINT_WORKER_SHELLCHECK_PID=
 }
 
+# fm_lint_run_one_file runs ShellCheck against exactly one file under a
+# wall-clock timeout and a `ulimit -v` memory ceiling, so a pathological file
+# is bounded on its own rather than able to stall or blow up a whole shard.
+# A timeout or memory-ceiling hit is appended to the shard output as a named
+# lint failure instead of propagating as a host-starving process; ordinary
+# ShellCheck findings (exit 1) pass through unchanged.
+#
+# The wall-clock bound is a SIGALRM deadline this function drives itself, not
+# coreutils `timeout`: `timeout` puts COMMAND in its own new process group so
+# it can reliably kill COMMAND's whole subtree, but that same isolation takes
+# ShellCheck out of the ambient process group the rest of fm-lint.sh's
+# signal-based cleanup relies on (proven by test_worker_trees_stop_on_signal -
+# an external interrupt to fm-lint.sh must still reach every running
+# ShellCheck). A fixed once-a-second poll was tried and rejected too: `wait`
+# on a specific pid only returns when THAT process exits, so polling with
+# `kill -0` between sleeps forces every file - even an instant clean one - to
+# pay up to a full poll tick, and the canonical set is hundreds of files.
+# `wait PID` DOES return immediately when a signal with a real (even no-op)
+# trap handler arrives, so a background `sleep "$timeout_s"; kill -ALRM $$`
+# lets the common case return the instant ShellCheck exits, with the alarm as
+# a deadline. Canceling that alarm early by killing its own pid only kills
+# the wrapping subshell, not the `sleep` it is blocked on - the orphaned
+# `sleep` keeps the shard's redirected stdout/stderr pipe open and hangs a
+# caller capturing that output via `$(...)`, and could later deliver its
+# ALRM into an unrelated file's wait. `pkill -P` targets the still-alive
+# subshell's child before killing the subshell itself (killing parent first
+# reparents the child to init, out of `pkill -P`'s reach) to avoid that; the
+# elapsed-time check below (SECONDS, not the alarm's mere arrival) is the
+# actual timeout verdict, so even an uncanceled stray alarm from an earlier
+# file can only cause a harmless spurious re-wait here, never a false
+# timeout. ShellCheck itself does not fork children, so a direct kill of its
+# own pid is sufficient to stop it.
+fm_lint_run_one_file() {  # <mem-kb> <timeout-s> <output-file> <path> -- <shellcheck-arg>...
+  local mem_kb=$1 timeout_s=$2 output=$3 path=$4 rc=0 current alarm_pid start timed_out=0
+  shift 4
+  [ "${1:-}" != -- ] || shift
+  local -a shellcheck_args=("$@")
+  current="$output.current"
+  : > "$current"
+  (
+    ulimit -v "$mem_kb" 2>/dev/null
+    exec "$FM_LINT_SHELLCHECK" "${shellcheck_args[@]}" -- "$path"
+  ) >> "$current" 2>&1 &
+  FM_LINT_WORKER_SHELLCHECK_PID=$!
+  ( sleep "$timeout_s"; kill -ALRM $$ 2>/dev/null ) > /dev/null 2>&1 &
+  alarm_pid=$!
+  # Disowned so bash's job control never announces "Terminated" to this
+  # shard's captured output when the deadline alarm is canceled below.
+  disown "$alarm_pid" 2>/dev/null || true
+  # A standing no-op handler, never reset back to ALRM's default (terminate):
+  # a stray alarm this function fails to cancel must only ever be able to
+  # interrupt a `wait` early, never kill fm-lint.sh outright.
+  trap : ALRM
+  start=$SECONDS
+  while :; do
+    wait "$FM_LINT_WORKER_SHELLCHECK_PID"
+    rc=$?
+    kill -0 "$FM_LINT_WORKER_SHELLCHECK_PID" 2>/dev/null || break
+    if [ $((SECONDS - start)) -ge "$timeout_s" ]; then
+      timed_out=1
+      kill -TERM "$FM_LINT_WORKER_SHELLCHECK_PID" 2>/dev/null || true
+      sleep 5
+      kill -KILL "$FM_LINT_WORKER_SHELLCHECK_PID" 2>/dev/null || true
+      wait "$FM_LINT_WORKER_SHELLCHECK_PID" 2>/dev/null
+      rc=$?
+      break
+    fi
+    # A stray alarm from an earlier, already-finished file woke this wait
+    # early; ShellCheck is still running and its own deadline has not
+    # arrived, so loop back and keep waiting on it.
+  done
+  pkill -TERM -P "$alarm_pid" 2>/dev/null || true
+  kill "$alarm_pid" 2>/dev/null || true
+  wait "$alarm_pid" 2>/dev/null || true
+  FM_LINT_WORKER_SHELLCHECK_PID=
+  if [ "$timed_out" -eq 1 ]; then
+    rc=124
+    printf 'fm-lint.sh: %s exceeded the %ss per-file lint timeout (FM_LINT_FILE_TIMEOUT); reported as a lint failure, continuing with the next file.\n' \
+      "$path" "$timeout_s" >> "$current"
+  else
+    case "$rc" in
+      137|139)
+        printf 'fm-lint.sh: %s hit the %s KiB per-file memory ceiling (FM_LINT_FILE_MEM_KB) and was killed; reported as a lint failure, continuing with the next file.\n' \
+          "$path" "$mem_kb" >> "$current"
+        ;;
+      *)
+        if [ "$rc" -gt 1 ] && grep -qi 'out of memory' "$current" 2>/dev/null; then
+          printf 'fm-lint.sh: %s hit the %s KiB per-file memory ceiling (FM_LINT_FILE_MEM_KB); reported as a lint failure, continuing with the next file.\n' \
+            "$path" "$mem_kb" >> "$current"
+        fi
+        ;;
+    esac
+  fi
+  cat "$current" >> "$output"
+  rm -f "$current"
+  return "$rc"
+}
+
 fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
-  local manifest=$1 output_dir=$2 shard_index=$3 tab index path output rc=0
+  local manifest=$1 output_dir=$2 shard_index=$3 tab index path output shard_rc=0 file_rc
+  local file_timeout=${FM_LINT_FILE_TIMEOUT:-120} file_mem_kb=${FM_LINT_FILE_MEM_KB:-1048576}
   local -a roots shellcheck_args
   roots=()
   tab=$(printf '\t')
@@ -71,6 +183,7 @@ fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
     roots+=("$path")
   done < "$manifest"
   output="$output_dir/shard.$shard_index"
+  : > "$output.out"
   if [ "${#roots[@]}" -gt 0 ]; then
     trap 'fm_lint_worker_stop; exit 129' HUP
     trap 'fm_lint_worker_stop; exit 130' INT
@@ -79,16 +192,17 @@ fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
     if [ "${FM_LINT_INTERNAL_FAST:-0}" -eq 1 ]; then
       shellcheck_args+=(--extended-analysis=false)
     fi
-    "$FM_LINT_SHELLCHECK" "${shellcheck_args[@]}" -- "${roots[@]}" > "$output.out" 2>&1 &
-    FM_LINT_WORKER_SHELLCHECK_PID=$!
-    wait "$FM_LINT_WORKER_SHELLCHECK_PID" || rc=$?
-    FM_LINT_WORKER_SHELLCHECK_PID=
+    for path in "${roots[@]}"; do
+      file_rc=0
+      fm_lint_run_one_file "$file_mem_kb" "$file_timeout" "$output.out" "$path" -- "${shellcheck_args[@]}" || file_rc=$?
+      if [ "$shard_rc" -eq 0 ] && [ "$file_rc" -ne 0 ]; then
+        shard_rc=$file_rc
+      fi
+    done
     trap - HUP INT TERM
-  else
-    : > "$output.out"
   fi
-  printf '%s\n' "$rc" > "$output.rc"
-  return "$rc"
+  printf '%s\n' "$shard_rc" > "$output.rc"
+  return "$shard_rc"
 }
 
 # Private subprocess mode used only by the bounded parent above.
@@ -124,6 +238,28 @@ fm_lint_run_workflows() {
 
 JOBS=${FM_LINT_JOBS:-2}
 TELEMETRY=${FM_LINT_TELEMETRY:-}
+FILE_TIMEOUT=${FM_LINT_FILE_TIMEOUT:-120}
+FILE_MEM_KB=${FM_LINT_FILE_MEM_KB:-1048576}
+case "$FILE_TIMEOUT" in
+  ''|*[!0-9]*)
+    printf 'fm-lint.sh: FM_LINT_FILE_TIMEOUT must be a positive integer number of seconds, got %s.\n' "$FILE_TIMEOUT" >&2
+    exit 2
+    ;;
+esac
+[ "$FILE_TIMEOUT" -gt 0 ] || {
+  printf 'fm-lint.sh: FM_LINT_FILE_TIMEOUT must be greater than zero.\n' >&2
+  exit 2
+}
+case "$FILE_MEM_KB" in
+  ''|*[!0-9]*)
+    printf 'fm-lint.sh: FM_LINT_FILE_MEM_KB must be a positive integer number of KiB, got %s.\n' "$FILE_MEM_KB" >&2
+    exit 2
+    ;;
+esac
+[ "$FILE_MEM_KB" -gt 0 ] || {
+  printf 'fm-lint.sh: FM_LINT_FILE_MEM_KB must be greater than zero.\n' >&2
+  exit 2
+}
 FAST=0
 ANALYSIS_MODE=full
 LIST_FILES=0
@@ -408,18 +544,18 @@ fm_lint_run_worker() {  # <worker-index>
     if [ "$(uname)" = Darwin ]; then
       exec "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
         /usr/bin/time -lp -o "$timing" \
-        env FM_LINT_INTERNAL=1 FM_LINT_INTERNAL_FAST="$FAST" FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
+        env FM_LINT_INTERNAL=1 FM_LINT_INTERNAL_FAST="$FAST" FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" FM_LINT_FILE_TIMEOUT="$FILE_TIMEOUT" FM_LINT_FILE_MEM_KB="$FILE_MEM_KB" \
         "${BASH:-bash}" "$SELF" --internal-worker "$manifest" "$OUTPUT_DIR" "$worker_index"
     else
       exec "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
         /usr/bin/time -f 'wall_seconds=%e\nuser_seconds=%U\nsystem_seconds=%S\nmax_rss_kib=%M' -o "$timing" \
-        env FM_LINT_INTERNAL=1 FM_LINT_INTERNAL_FAST="$FAST" FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
+        env FM_LINT_INTERNAL=1 FM_LINT_INTERNAL_FAST="$FAST" FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" FM_LINT_FILE_TIMEOUT="$FILE_TIMEOUT" FM_LINT_FILE_MEM_KB="$FILE_MEM_KB" \
         "${BASH:-bash}" "$SELF" --internal-worker "$manifest" "$OUTPUT_DIR" "$worker_index"
     fi
   else
     [ -z "$TELEMETRY" ] || printf 'timing_unavailable=1\n' > "$timing"
     exec "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
-      env FM_LINT_INTERNAL=1 FM_LINT_INTERNAL_FAST="$FAST" FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
+      env FM_LINT_INTERNAL=1 FM_LINT_INTERNAL_FAST="$FAST" FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" FM_LINT_FILE_TIMEOUT="$FILE_TIMEOUT" FM_LINT_FILE_MEM_KB="$FILE_MEM_KB" \
       "${BASH:-bash}" "$SELF" --internal-worker "$manifest" "$OUTPUT_DIR" "$worker_index"
   fi
 }
