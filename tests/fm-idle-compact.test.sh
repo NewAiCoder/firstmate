@@ -276,6 +276,38 @@ test_eligible_declared_state_bypasses_threshold() {
   ) || exit 1
 }
 
+test_eligible_declared_state_with_trailing_detail_bypasses_threshold() {
+  (
+    local dir
+    dir=$(new_dir elig-declared-detail)
+    write_task_meta "$dir/state" t1
+    # The exact line pt-checkin-fidelity-lane8 appended on 2026-09-06: the brief
+    # asks the worker to note its measured lane size, so trailing detail after
+    # the phrase is the norm. A whole-line equality test missed it, dropped the
+    # episode onto the ordinary path, and left the worker unrung for 60 minutes.
+    touch_status "$dir/state" t1 5 \
+      'paused: awaiting compaction before validation (commit 3985d693a, 1292 changed lines, over-cap accepted)'
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    fm_idle_compact_eligible "$dir/state" t1 30 \
+      || fail "the declared-state phrase with trailing detail must bypass the idle-minutes threshold"
+    pass "fm_idle_compact_eligible: the declared-state phrase bypasses the threshold with trailing detail after it"
+  ) || exit 1
+}
+
+test_eligible_declared_phrase_must_end_on_a_word_boundary() {
+  (
+    local dir
+    dir=$(new_dir elig-declared-boundary)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 5 'paused: awaiting compaction before validationX of the fixtures'
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    if fm_idle_compact_eligible "$dir/state" t1 30; then
+      fail "the prefix match must end on a word boundary, not swallow a longer word"
+    fi
+    pass "fm_idle_compact_eligible: the declared-phrase prefix match requires a word boundary after it"
+  ) || exit 1
+}
+
 test_eligible_other_paused_text_still_gated_by_threshold() {
   (
     local dir
@@ -286,7 +318,7 @@ test_eligible_other_paused_text_still_gated_by_threshold() {
     if fm_idle_compact_eligible "$dir/state" t1 30; then
       fail "any other paused: text must still be gated by the ordinary idle-minutes threshold"
     fi
-    pass "fm_idle_compact_eligible: any paused: text other than the exact declared phrase gets no bypass"
+    pass "fm_idle_compact_eligible: any paused: text that does not start with the declared phrase gets no bypass"
   ) || exit 1
 }
 
@@ -484,7 +516,7 @@ test_settling_declared_rings_worker_on_done() {
   ) || exit 1
 }
 
-test_settling_declared_unsafe_pane_defers_ring_stays_settling() {
+test_settling_declared_unsafe_pane_still_rings() {
   (
     local dir log marker
     dir=$(new_dir sm-declared-ring-unsafe)
@@ -494,17 +526,63 @@ test_settling_declared_unsafe_pane_defers_ring_stays_settling() {
     # shellcheck disable=SC2329 # invoked indirectly through fm_idle_compact_safe_to_send
     fm_busy_classify() { printf 'busy claude-hook'; }
     # shellcheck disable=SC2329 # invoked indirectly through fm_idle_compact_safe_to_send
-    fm_backend_composer_state() { printf 'empty'; }
+    fm_backend_composer_state() { printf 'pending'; }
     stub_recording_send "$log"
     FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
     marker=$(fm_idle_compact_marker_path "$dir/state" t1)
     fm_idle_compact_marker_write "$marker" phase=settling "settle_epoch=1" declared=1
 
     FM_IDLE_COMPACT_SETTLE_SECS=1 fm_idle_compact_process_task "$dir/state" t1 30
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
+      || fail "a durable ring must not be deferred by a live pane verdict"
+    grep -q 'compacted - start the validation run now' "$log" \
+      || fail "the ring is an inbox record, so a busy pane is exactly the case it exists for"
+    pass "fm_idle_compact_process_task: the post-settle ring is durable and goes out even over a busy pane"
+  ) || exit 1
+}
+
+test_settling_declared_send_failure_stays_settling() {
+  (
+    local dir marker
+    dir=$(new_dir sm-declared-ring-fail)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600
+    stub_always_safe
+    # shellcheck disable=SC2329 # invoked indirectly through fm_idle_compact_ring_worker
+    fm_idle_compact_send() { return 1; }
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    fm_idle_compact_marker_write "$marker" phase=settling "settle_epoch=1" declared=1
+
+    FM_IDLE_COMPACT_SETTLE_SECS=1 fm_idle_compact_process_task "$dir/state" t1 30
     [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'settling' ] \
-      || fail "a busy pane at the settle window must defer the ring, staying in phase=settling for a later sweep"
-    [ ! -s "$log" ] || fail "a busy pane must never receive the ring message, declared state or not"
-    pass "fm_idle_compact_process_task: the post-settle ring respects the live safety gate and retries later when unsafe"
+      || fail "the episode must advance to phase=done only after the ring record exists"
+    pass "fm_idle_compact_process_task: a failed ring enqueue keeps the episode in phase=settling for a later sweep"
+  ) || exit 1
+}
+
+test_settling_ordinary_path_rings_a_worker_still_declaring_the_pause() {
+  (
+    local dir log marker
+    dir=$(new_dir sm-ordinary-declared-ring)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600 \
+      'paused: awaiting compaction before validation (commit 3985d693a, 1292 changed lines, over-cap accepted)'
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    # No declared=1: the ordinary save-then-compact path, which is the path both
+    # 2026-09-06 lanes took because their status lines carried trailing detail.
+    fm_idle_compact_marker_write "$marker" phase=settling "settle_epoch=1"
+
+    FM_IDLE_COMPACT_SETTLE_SECS=1 fm_idle_compact_process_task "$dir/state" t1 30
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
+      || fail "past the settle window the episode must still advance to phase=done"
+    grep -q 'compacted - start the validation run now' "$log" \
+      || fail "a worker whose status still declares the compaction pause must be rung whichever path the episode took"
+    pass "fm_idle_compact_process_task: the ordinary path also rings a worker whose status still declares the compaction pause"
   ) || exit 1
 }
 
@@ -703,7 +781,10 @@ test_savesent_timeout_abandons_without_compact() {
     [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
       || fail "a save turn that never completes must be abandoned to phase=done past the timeout"
     [ ! -s "$log" ] || fail "an abandoned episode must never send /compact"
-    pass "fm_idle_compact_process_task: a save turn that never completes is abandoned past FM_IDLE_COMPACT_SAVE_TIMEOUT_SECS, without ever sending /compact"
+    case "$(fm_idle_compact_marker_field "$marker" settle_epoch)" in
+      ''|*[!0-9]*) fail "the abandon path must stamp a numeric settle_epoch so the ring backstop scopes to this episode" ;;
+    esac
+    pass "fm_idle_compact_process_task: a save turn that never completes is abandoned past FM_IDLE_COMPACT_SAVE_TIMEOUT_SECS, without ever sending /compact, and stamps settle_epoch"
   ) || exit 1
 }
 
@@ -820,6 +901,200 @@ test_done_pane_change_clears_marker() {
     [ "$(fm_idle_compact_marker_field "$marker" phase)" = reset ] \
       || fail "a changed pane signature must end the phase=done episode even when the crew is not currently eligible"
     pass "fm_idle_compact_process_task: a changed pane signature alone ends phase=done, independent of status"
+  ) || exit 1
+}
+
+# --- ring backstop (fm_idle_compact_ring_backstop) ---------------------------
+# The last line of defence for a worker that was compacted, never rung, and is
+# waiting on firstmate rather than on an external event.
+
+# Arranges a phase=done marker whose signatures match reality (so the episode is
+# a no-op) over a status log that still declares the compaction pause, aged
+# <marker-age> seconds. Echoes the marker path. An optional <settle-epoch>
+# reproduces the field the real settling->done transition now persists
+# (fm_idle_compact_advance_settling), so a test can construct a SECOND
+# episode's marker distinguishable from an earlier episode's inbox records;
+# omitted, the marker carries no settle_epoch at all, matching a legacy marker.
+arrange_done_declaring_pause() {  # <dir> <task> <marker-age> [settle-epoch]
+  local dir=$1 task=$2 age=$3 settle_epoch=${4:-} marker
+  write_task_meta "$dir/state" "$task"
+  touch_status "$dir/state" "$task" 3600 \
+    'paused: awaiting compaction before validation (commit 3985d693a, 1292 changed lines, over-cap accepted)'
+  fm_idle_compact_task_context "$dir/state" "$task"
+  marker=$(fm_idle_compact_marker_path "$dir/state" "$task")
+  if [ -n "$settle_epoch" ]; then
+    fm_idle_compact_marker_write "$marker" phase=done \
+      "status_sig=$(fm_idle_compact_status_sig "$dir/state" "$task")" \
+      "pane_sig=$(fm_idle_compact_pane_sig "$FM_IDLE_COMPACT_BACKEND" "$FM_IDLE_COMPACT_TARGET" "$FM_IDLE_COMPACT_LABEL")" \
+      "settle_epoch=$settle_epoch"
+  else
+    fm_idle_compact_marker_write "$marker" phase=done \
+      "status_sig=$(fm_idle_compact_status_sig "$dir/state" "$task")" \
+      "pane_sig=$(fm_idle_compact_pane_sig "$FM_IDLE_COMPACT_BACKEND" "$FM_IDLE_COMPACT_TARGET" "$FM_IDLE_COMPACT_LABEL")"
+  fi
+  backdate "$marker" "$age"
+  printf '%s' "$marker"
+}
+
+test_backstop_fires_on_a_stale_done_episode_with_no_ring_record() {
+  (
+    local dir log marker
+    dir=$(new_dir backstop-stale)
+    log="$dir/sends.log"; : > "$log"
+    fm_busy_classify() { printf 'idle claude-hook'; }
+    fm_backend_composer_state() { printf 'empty'; }
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    marker=$(arrange_done_declaring_pause "$dir" t1 1800)
+
+    fm_idle_compact_process_task "$dir/state" t1 30
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
+      || fail "the backstop must not disturb the episode phase"
+    grep -q 'compacted - start the validation run now' "$log" \
+      || fail "a stale phase=done episode over a still-declared pause must be rung"
+    grep -q 'ring backstop re-sent' "$dir/state/.idle-compact.log" \
+      || fail "the backstop must log, because it firing means the primary path missed"
+    pass "fm_idle_compact_ring_backstop: a stale phase=done episode with no ring record is rung and logged"
+  ) || exit 1
+}
+
+test_backstop_does_not_fire_on_a_fresh_done_episode() {
+  (
+    local dir log
+    dir=$(new_dir backstop-fresh)
+    log="$dir/sends.log"; : > "$log"
+    fm_busy_classify() { printf 'idle claude-hook'; }
+    fm_backend_composer_state() { printf 'empty'; }
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    arrange_done_declaring_pause "$dir" t1 30 >/dev/null
+
+    fm_idle_compact_process_task "$dir/state" t1 30
+    [ ! -s "$log" ] \
+      || fail "a freshly-rung worker that has simply not taken its turn yet must be left alone"
+    pass "fm_idle_compact_ring_backstop: a fresh phase=done episode is left alone"
+  ) || exit 1
+}
+
+test_backstop_skips_when_the_inbox_already_holds_the_ring() {
+  (
+    local dir log
+    dir=$(new_dir backstop-recorded)
+    log="$dir/sends.log"; : > "$log"
+    fm_busy_classify() { printf 'idle claude-hook'; }
+    fm_backend_composer_state() { printf 'empty'; }
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    arrange_done_declaring_pause "$dir" t1 1800 >/dev/null
+    fm_task_inbox_write "$dir/state" t1 "$(fm_idle_compact_ring_message)" >/dev/null
+
+    fm_idle_compact_process_task "$dir/state" t1 30
+    [ ! -s "$log" ] \
+      || fail "a worker that already holds the ring record must never be sent it twice"
+    pass "fm_idle_compact_ring_backstop: an existing ring record in the inbox suppresses the re-send"
+  ) || exit 1
+}
+
+test_backstop_skips_when_the_ring_was_already_acknowledged() {
+  (
+    local dir log rec handled
+    dir=$(new_dir backstop-handled)
+    log="$dir/sends.log"; : > "$log"
+    fm_busy_classify() { printf 'idle claude-hook'; }
+    fm_backend_composer_state() { printf 'empty'; }
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    arrange_done_declaring_pause "$dir" t1 1800 >/dev/null
+    rec=$(fm_task_inbox_write "$dir/state" t1 "$(fm_idle_compact_ring_message)")
+    handled=$(fm_task_inbox_handled_dir "$dir/state" t1)
+    mkdir -p "$handled" && mv "$rec" "$handled/"
+
+    fm_idle_compact_process_task "$dir/state" t1 30
+    [ ! -s "$log" ] \
+      || fail "an acknowledged ring in handled/ still proves the worker was rung"
+    pass "fm_idle_compact_ring_backstop: an acknowledged ring record in handled/ suppresses the re-send"
+  ) || exit 1
+}
+
+# Sequence numbers - and so handled/ records - are never reused for a task's
+# whole lifetime, so a task that runs a SECOND idle-compact episode keeps the
+# first episode's acknowledged ring on disk, same constant body text. A
+# second episode whose own ring enqueue genuinely failed must still be rung by
+# the backstop; the stale first episode's ring must never satisfy the check.
+test_backstop_ignores_a_prior_episodes_acknowledged_ring() {
+  (
+    local dir log rec handled marker
+    dir=$(new_dir backstop-prior-episode)
+    log="$dir/sends.log"; : > "$log"
+    fm_busy_classify() { printf 'idle claude-hook'; }
+    fm_backend_composer_state() { printf 'empty'; }
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600 \
+      'paused: awaiting compaction before validation (commit 3985d693a, 1292 changed lines, over-cap accepted)'
+
+    # Episode 1: rang and acknowledged.
+    rec=$(fm_task_inbox_write "$dir/state" t1 "$(fm_idle_compact_ring_message)")
+    handled=$(fm_task_inbox_handled_dir "$dir/state" t1)
+    mkdir -p "$handled" && mv "$rec" "$handled/"
+
+    # Episode 2's settle_epoch (fixed a few seconds ahead so it cannot land in
+    # the same wall-clock second as episode 1's `at=` write above, which is
+    # the only thing that timestamp comparison needs to tell them apart) is
+    # strictly after episode 1's ring was recorded, and its own settling->done
+    # ring enqueue genuinely failed - nothing new written to the inbox.
+    marker=$(arrange_done_declaring_pause "$dir" t1 1800 "$(( $(date +%s) + 5 ))")
+
+    fm_idle_compact_process_task "$dir/state" t1 30
+    grep -q 'compacted - start the validation run now' "$log" \
+      || fail "a second episode's genuinely missing ring must not be suppressed by a prior episode's acknowledged, textually identical ring"
+    pass "fm_idle_compact_ring_backstop: a prior episode's acknowledged ring never suppresses a later episode's missing ring"
+  ) || exit 1
+}
+
+test_backstop_fires_at_most_once_per_episode() {
+  (
+    local dir log marker
+    dir=$(new_dir backstop-once)
+    log="$dir/sends.log"; : > "$log"
+    fm_busy_classify() { printf 'idle claude-hook'; }
+    fm_backend_composer_state() { printf 'empty'; }
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    marker=$(arrange_done_declaring_pause "$dir" t1 1800)
+
+    fm_idle_compact_process_task "$dir/state" t1 30
+    backdate "$marker" 1800
+    fm_idle_compact_process_task "$dir/state" t1 30
+    [ "$(wc -l < "$log")" = 1 ] \
+      || fail "the backstop must re-send exactly once per episode, not on every later sweep"
+    pass "fm_idle_compact_ring_backstop: the re-send happens at most once per episode"
+  ) || exit 1
+}
+
+test_backstop_ignores_a_status_that_no_longer_declares_the_pause() {
+  (
+    local dir log marker
+    dir=$(new_dir backstop-notdeclared)
+    log="$dir/sends.log"; : > "$log"
+    fm_busy_classify() { printf 'idle claude-hook'; }
+    fm_backend_composer_state() { printf 'empty'; }
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600 'paused: no-mistakes run in progress, clears on its own'
+    fm_idle_compact_task_context "$dir/state" t1
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    fm_idle_compact_marker_write "$marker" phase=done \
+      "status_sig=$(fm_idle_compact_status_sig "$dir/state" t1)" \
+      "pane_sig=$(fm_idle_compact_pane_sig "$FM_IDLE_COMPACT_BACKEND" "$FM_IDLE_COMPACT_TARGET" "$FM_IDLE_COMPACT_LABEL")"
+    backdate "$marker" 1800
+
+    fm_idle_compact_process_task "$dir/state" t1 30
+    [ ! -s "$log" ] \
+      || fail "a worker waiting on a genuine external event must never be rung to start validation"
+    pass "fm_idle_compact_ring_backstop: a status declaring some other wait is never rung"
   ) || exit 1
 }
 
@@ -1094,6 +1369,106 @@ test_tick_present_config_sweeps_eligible_task() {
   ) || exit 1
 }
 
+test_tick_delivers_the_ring_through_the_shared_sweep() {
+  (
+    local dir log marker
+    dir=$(new_dir tick-ring)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600 \
+      'paused: awaiting compaction before validation (commit 3985d693a, 1292 changed lines, over-cap accepted)'
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    printf '30\n' > "$dir/config/idle-compact"
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+
+    # Sweep one: the declared pause skips the notes save and sends /compact.
+    fm_idle_compact_tick "$dir/state" "$dir/config"
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'settling' ] \
+      || fail "the first sweep must send /compact and record phase=settling"
+    # Sweep two, past the settle window: the ring goes out and the episode lands.
+    rm -f "$dir/state/.idle-compact-last-sweep"
+    FM_IDLE_COMPACT_SETTLE_SECS=0 fm_idle_compact_tick "$dir/state" "$dir/config"
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
+      || fail "the second sweep must land the episode at phase=done"
+    grep -q 'compacted - start the validation run now' "$log" \
+      || fail "the ring must be delivered by the shared sweep both supervision paths call"
+    pass "fm_idle_compact_tick: the shared sweep both supervision paths call delivers the ring end to end"
+  ) || exit 1
+}
+
+# bin/fm-watch.sh's main loop (attended) and bin/fm-supervise-daemon.sh's
+# housekeeping (away mode) must reach the ring through the SAME entry point, or
+# a worker's recovery would depend on whether the captain happened to be away -
+# which is exactly the condition both 2026-09-06 lanes ran under. Both tests
+# below source the real production file and drive its actual call site (the
+# single-argument fm_idle_compact_tick form bin/fm-watch.sh's loop uses, and
+# the housekeeping() function bin/fm-supervise-daemon.sh's tick literally is)
+# against a declared-pause fixture, and assert the ring lands - not that the
+# call text merely appears in the file.
+
+test_watch_tick_call_site_delivers_the_ring_end_to_end() {
+  (
+    local dir log marker
+    dir=$(new_dir watch-tick-ring)
+    FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" . "$ROOT/bin/fm-watch.sh"
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600 \
+      'paused: awaiting compaction before validation (commit 3985d693a, 1292 changed lines, over-cap accepted)'
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    printf '30\n' > "$dir/config/idle-compact"
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+
+    # The exact call bin/fm-watch.sh's poll loop makes: fm_idle_compact_tick
+    # "$STATE" || true, against the STATE/CONFIG this sourcing resolved.
+    # shellcheck disable=SC2153 # STATE is assigned by sourcing bin/fm-watch.sh above, not a typo of $state
+    fm_idle_compact_tick "$STATE" || true
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'settling' ] \
+      || fail "bin/fm-watch.sh's tick call site must send /compact and record phase=settling"
+    rm -f "$dir/state/.idle-compact-last-sweep"
+    FM_IDLE_COMPACT_SETTLE_SECS=0 fm_idle_compact_tick "$STATE" || true
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
+      || fail "bin/fm-watch.sh's tick call site must land the episode at phase=done"
+    grep -q 'compacted - start the validation run now' "$log" \
+      || fail "bin/fm-watch.sh's own fm_idle_compact_tick call site must deliver the ring"
+    pass "bin/fm-watch.sh: its poll-loop fm_idle_compact_tick call delivers the ring end to end"
+  ) || exit 1
+}
+
+test_supervise_daemon_housekeeping_delivers_the_ring_end_to_end() {
+  (
+    local dir log marker
+    dir=$(new_dir daemon-tick-ring)
+    FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" . "$ROOT/bin/fm-supervise-daemon.sh"
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600 \
+      'paused: awaiting compaction before validation (commit 3985d693a, 1292 changed lines, over-cap accepted)'
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    printf '30\n' > "$dir/config/idle-compact"
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+
+    # The real away-mode call site: housekeeping() step (4), the exact
+    # condition both 2026-09-06 lanes ran under.
+    housekeeping "$dir/state"
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'settling' ] \
+      || fail "bin/fm-supervise-daemon.sh's housekeeping() must send /compact and record phase=settling"
+    rm -f "$dir/state/.idle-compact-last-sweep"
+    FM_IDLE_COMPACT_SETTLE_SECS=0 housekeeping "$dir/state"
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
+      || fail "bin/fm-supervise-daemon.sh's housekeeping() must land the episode at phase=done"
+    grep -q 'compacted - start the validation run now' "$log" \
+      || fail "bin/fm-supervise-daemon.sh's own housekeeping() call site must deliver the ring"
+    pass "bin/fm-supervise-daemon.sh: away-mode housekeeping() delivers the ring end to end"
+  ) || exit 1
+}
+
 test_tick_sweep_due_gating() {
   (
     local dir
@@ -1123,6 +1498,7 @@ test_tick_held_sweep_lock_defers_whole_sweep() {
     log="$dir/sends.log"; : > "$log"
     stub_always_safe
     stub_recording_send "$log"
+    # shellcheck disable=SC2034 # read by fm_idle_compact_eligible in the sourced fm-idle-compact.sh library
     FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: parked")
     printf '30\n' > "$dir/config/idle-compact"
 
@@ -1170,6 +1546,8 @@ test_eligible_excludes_non_wait_crew_states
 test_eligible_includes_every_wait_state
 
 test_eligible_declared_state_bypasses_threshold
+test_eligible_declared_state_with_trailing_detail_bypasses_threshold
+test_eligible_declared_phrase_must_end_on_a_word_boundary
 test_eligible_other_paused_text_still_gated_by_threshold
 
 test_safe_to_send_requires_exact_idle
@@ -1182,7 +1560,9 @@ test_no_marker_unsafe_pane_defers_no_send
 test_no_marker_declared_state_skips_save_sends_compact_directly
 test_no_marker_declared_state_ignored_when_pane_unsafe
 test_settling_declared_rings_worker_on_done
-test_settling_declared_unsafe_pane_defers_ring_stays_settling
+test_settling_declared_unsafe_pane_still_rings
+test_settling_declared_send_failure_stays_settling
+test_settling_ordinary_path_rings_a_worker_still_declaring_the_pause
 test_settling_non_declared_never_rings_worker
 test_savesent_no_turnended_yet_stays_savesent
 test_savesent_turnended_advanced_sends_compact_and_marks_settling
@@ -1194,6 +1574,14 @@ test_settling_past_window_records_done_and_next_sweep_is_noop
 test_done_unchanged_signatures_is_noop
 test_done_status_change_clears_marker_and_restarts_episode
 test_done_pane_change_clears_marker
+
+test_backstop_fires_on_a_stale_done_episode_with_no_ring_record
+test_backstop_does_not_fire_on_a_fresh_done_episode
+test_backstop_skips_when_the_inbox_already_holds_the_ring
+test_backstop_skips_when_the_ring_was_already_acknowledged
+test_backstop_ignores_a_prior_episodes_acknowledged_ring
+test_backstop_fires_at_most_once_per_episode
+test_backstop_ignores_a_status_that_no_longer_declares_the_pause
 
 test_reset_stamp_holds_off_a_new_episode_for_a_full_window
 test_recent_turn_end_blocks_eligibility_despite_ancient_status
@@ -1208,6 +1596,9 @@ test_does_not_absorb_while_a_sweep_holds_the_lock
 
 test_tick_absent_config_is_grep_provably_inert
 test_tick_present_config_sweeps_eligible_task
+test_tick_delivers_the_ring_through_the_shared_sweep
+test_watch_tick_call_site_delivers_the_ring_end_to_end
+test_supervise_daemon_housekeeping_delivers_the_ring_end_to_end
 test_tick_sweep_due_gating
 test_tick_held_sweep_lock_defers_whole_sweep
 
