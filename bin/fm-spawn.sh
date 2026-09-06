@@ -1290,7 +1290,21 @@ launch_template() {
     # crewmate seat, of which the global rules layer was only 23k-27k.
     # A task that genuinely needs an extra names it on the brief's `tools:`
     # line; fm_brief_tools reads it and fm-spawn writes the matching MCP entry.
-    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '\''{"feedbackDrafts":"off"}'\'' --setting-sources project,local --strict-mcp-config --mcp-config __MCPCONFIG__ __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    # A secondmate is exempt from the minimal surface (kept on the full,
+    # pre-D6 surface below): its charter has no `## Firstmate spec` `tools:`
+    # line to widen from, so a minimal secondmate would be permanently locked
+    # out of every extra with no opt-in, and it is a long-lived home rather
+    # than a single narrow task, so the cold-prefix saving does not apply the
+    # same way. Its settings.local.json also never receives the mirrored
+    # user-scope hooks below, because it keeps the full `user` settings scope
+    # natively (docs/configuration.md documents this exemption).
+    claude)
+      if [ "$kind" = secondmate ]; then
+        printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '\''{"feedbackDrafts":"off"}'\'' __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+      else
+        printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '\''{"feedbackDrafts":"off"}'\'' --setting-sources project,local --strict-mcp-config --mcp-config __MCPCONFIG__ __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+      fi
+      ;;
     codex)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'codex __MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
@@ -2750,9 +2764,38 @@ if [ "$KIND" != secondmate ]; then
       j_stop=$(json_escape "touch $(shell_quote "$TURNEND"); $busy_cmd_prefix idle $busy_suffix --event stop 2>/dev/null || true")
       j_stopfail=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event stop-failure 2>/dev/null || true")
       j_sessionend=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event session-end 2>/dev/null || true")
-      cat > "$WT/.claude/settings.local.json" <<EOF
-{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"$j_submit"}]}],"Stop":[{"hooks":[{"type":"command","command":"$j_stop"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"$j_stopfail"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"$j_sessionend"}]}]}}
-EOF
+      BUSY_HOOKS_JSON=$(printf '{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"%s"}]}],"Stop":[{"hooks":[{"type":"command","command":"%s"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"%s"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"%s"}]}]}' \
+        "$j_submit" "$j_stop" "$j_stopfail" "$j_sessionend")
+      # This launch dropped the `user` settings scope (--setting-sources
+      # project,local, above) to skip the plugin skill catalog it also
+      # carries. That scope is also where the captain's own PreToolUse /
+      # PostToolUse safety hooks live (compound-cd guard, headless-model-pin
+      # guard, etc.) - mirror every hook the captain's user-scope settings
+      # register into this task's local settings so they still fire, merged
+      # with the busy-state hooks above rather than replacing either side.
+      # docs/configuration.md documents this mirroring and the secondmate
+      # exemption (a secondmate never reaches this branch: launch_template
+      # keeps it on the full settings-sources surface instead).
+      CLAUDE_USER_SETTINGS=
+      if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+        CLAUDE_USER_SETTINGS="$CLAUDE_CONFIG_DIR/settings.json"
+      elif [ -n "${HOME:-}" ]; then
+        CLAUDE_USER_SETTINGS="$HOME/.claude/settings.json"
+      fi
+      USER_HOOKS_JSON='{}'
+      if [ -n "$CLAUDE_USER_SETTINGS" ] && [ -f "$CLAUDE_USER_SETTINGS" ]; then
+        command -v jq >/dev/null 2>&1 || {
+          echo "error: jq is required to mirror the captain's user-scope safety hooks from $CLAUDE_USER_SETTINGS into this task's minimal settings" >&2
+          exit 1
+        }
+        USER_HOOKS_JSON=$(jq -c '.hooks // {}' "$CLAUDE_USER_SETTINGS" 2>/dev/null) || {
+          echo "error: could not parse $CLAUDE_USER_SETTINGS as JSON to mirror its user-scope hooks" >&2
+          exit 1
+        }
+      fi
+      jq -c -n --argjson user "$USER_HOOKS_JSON" --argjson busy "$BUSY_HOOKS_JSON" \
+        '{hooks: ((($user | to_entries) + ($busy | to_entries)) | group_by(.key) | map({key: .[0].key, value: (map(.value) | add)}) | from_entries)}' \
+        > "$WT/.claude/settings.local.json"
       exclude_path '.claude/settings.local.json'
       ;;
     gemini)

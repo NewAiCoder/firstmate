@@ -777,6 +777,55 @@ test_non_claude_harness_ignores_config_dir() {
   pass "non-claude harnesses do not receive the claude CLAUDE_CONFIG_DIR prefix"
 }
 
+test_claude_mirrors_user_scope_safety_hooks() {
+  local rec id out status settings
+  id=profile-claude-hooks-z20
+  rec=$(make_spawn_case profile-claude-hooks claude "$id")
+  read_case_record "$rec"
+
+  mkdir -p "$CASE_DIR/claude-work"
+  cat > "$CASE_DIR/claude-work/settings.json" <<'JSON'
+{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"guard-compound-cd"}]}],"Stop":[{"hooks":[{"type":"command","command":"user-stop-hook"}]}]}}
+JSON
+
+  out=$(FM_TEST_CLAUDE_CONFIG_DIR="$CASE_DIR/claude-work" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "claude spawn with a user-scope settings.json present should succeed"$'\n'"$out"
+
+  settings="$WT_DIR/.claude/settings.local.json"
+  [ -f "$settings" ] || fail "claude spawn did not write settings.local.json"
+  assert_contains "$(cat "$settings")" "guard-compound-cd" \
+    "settings.local.json is missing the mirrored user-scope PreToolUse hook command"
+  assert_contains "$(cat "$settings")" "user-stop-hook" \
+    "settings.local.json is missing the mirrored user-scope Stop hook command"
+  assert_contains "$(cat "$settings")" "fm-busy-event.sh" \
+    "settings.local.json lost its own busy-state hook commands while merging in the mirrored ones"
+  pass "claude mirrors every user-scope hook into the task's minimal settings, merged with the busy-state hooks"
+}
+
+test_claude_secondmate_keeps_full_settings_surface_and_skips_hook_mirroring() {
+  local rec id sm out status launch
+  id=profile-secondmate-claude-z21
+  rec=$(make_spawn_case profile-secondmate-claude claude "$id")
+  read_case_record "$rec"
+  sm="$CASE_DIR/secondmate-home"
+  make_seeded_secondmate_home "$sm" "$id"
+
+  out=$(FM_TEST_CLAUDE_CONFIG_DIR="$CASE_DIR/claude-work" \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate)
+  status=$?
+  expect_code 0 "$status" "secondmate claude spawn should succeed"$'\n'"$out"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_not_contains "$launch" "--setting-sources" \
+    "a secondmate claude launch must keep the full settings surface, not the minimal one"
+  assert_not_contains "$launch" "--strict-mcp-config" \
+    "a secondmate claude launch must not be pinned to the minimal MCP surface"
+  [ -f "$sm/.claude/settings.local.json" ] \
+    && fail "a secondmate claude launch must not write the mirrored-hooks settings.local.json"
+  pass "a secondmate claude launch keeps the full settings surface and skips hook mirroring"
+}
+
 test_active_dispatch_profile_does_not_block_secondmate_launch() {
   local rec id sm out status
   id=profile-secondmate-z16
@@ -825,6 +874,8 @@ test_batch_forwards_shared_profile_flags
 test_claude_forwards_firstmate_config_dir_when_set
 test_claude_omits_config_dir_prefix_when_unset
 test_non_claude_harness_ignores_config_dir
+test_claude_mirrors_user_scope_safety_hooks
+test_claude_secondmate_keeps_full_settings_surface_and_skips_hook_mirroring
 test_active_dispatch_profile_does_not_block_secondmate_launch
 
 echo "# all fm-spawn-dispatch-profile tests passed"

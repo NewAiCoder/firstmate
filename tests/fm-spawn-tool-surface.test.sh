@@ -10,7 +10,11 @@ trap 'rm -rf -- "$TMP"' EXIT
 # shellcheck source=bin/fm-dod-lib.sh
 . "$ROOT/bin/fm-dod-lib.sh"
 
-TEMPLATE=$(grep -n 'claude) printf' "$ROOT/bin/fm-spawn.sh" | head -1)
+# The non-secondmate claude template is the one carrying the minimal surface
+# (a secondmate is exempt - see docs/configuration.md); its printf line is the
+# only one that pairs --strict-mcp-config with --mcp-config, so grep on that
+# pairing rather than on `claude) printf`, which no longer names a single line.
+TEMPLATE=$(grep -n -- '--strict-mcp-config --mcp-config' "$ROOT/bin/fm-spawn.sh" | head -1)
 
 case "$TEMPLATE" in
   *"--strict-mcp-config"*) echo "ok - template pins strict MCP config" ;;

@@ -777,9 +777,13 @@ test_spawn_secondmate_harness_model_token() {
   [ "$(meta_field "$meta" model)" = opus ] || fail "model-token: meta model not opus (got '$(meta_field "$meta" model)')"
   [ "$(meta_field "$meta" effort)" = default ] || fail "model-token: meta effort not default (got '$(meta_field "$meta" effort)')"
   launch=$(cat "$launchlog")
-  assert_contains "$launch" "claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\"}' --setting-sources project,local --strict-mcp-config --mcp-config '/tmp/fm-sm/mcp.json' --model 'opus'" \
+  assert_contains "$launch" "claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\"}' --model 'opus'" \
     "model-token: launch did not carry --model opus"
   assert_not_contains "$launch" "--effort" "model-token: launch must not carry an --effort flag"
+  assert_not_contains "$launch" "--setting-sources" \
+    "model-token: a secondmate launch must keep the full settings surface"
+  assert_not_contains "$launch" "--strict-mcp-config" \
+    "model-token: a secondmate launch must not be pinned to the minimal MCP surface"
   pass "C3 spawn: config/secondmate-harness's model token threads --model into the launch and meta"
 }
 
@@ -799,8 +803,10 @@ test_spawn_secondmate_harness_model_and_effort_tokens() {
   [ "$(meta_field "$meta" model)" = opus ] || fail "model-effort-tokens: meta model not opus"
   [ "$(meta_field "$meta" effort)" = high ] || fail "model-effort-tokens: meta effort not high (got '$(meta_field "$meta" effort)')"
   launch=$(cat "$launchlog")
-  assert_contains "$launch" "claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\"}' --setting-sources project,local --strict-mcp-config --mcp-config '/tmp/fm-sm/mcp.json' --model 'opus' --effort 'high'" \
+  assert_contains "$launch" "claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\"}' --model 'opus' --effort 'high'" \
     "model-effort-tokens: launch did not carry both --model opus and --effort high"
+  assert_not_contains "$launch" "--setting-sources" \
+    "model-effort-tokens: a secondmate launch must keep the full settings surface"
   pass "C4 spawn: config/secondmate-harness's model+effort tokens thread into the launch and meta"
 }
 
