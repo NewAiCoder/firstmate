@@ -102,8 +102,10 @@
 # this owner about; see its own comment for the conditions it requires.
 #
 # Every message is delivered through bin/fm-send.sh exactly as any other
-# steer - the notes save and the `/compact` command on its typed plane, the
-# ring on its durable inbox plane - so this file never calls a backend
+# steer, with the same plane selection fm-send.sh itself applies to any
+# unmarked task-selector text: only the leading-`/` `/compact` command rides
+# the typed plane, while the plain-text notes save and the ring both ride
+# fm-send's durable inbox plane - so this file never calls a backend
 # primitive or raw tmux command directly, and a deferred or failed attempt at
 # any phase is silent routine, retried on the next sweep and never a
 # captain-facing escalation.
@@ -438,21 +440,59 @@ fm_idle_compact_send() {  # <state> <task> <message>
 # The ring is a DURABLE record, not typed text. fm-send routes plain text to
 # the task's steering inbox (bin/fm-task-inbox-lib.sh), where the watcher's
 # re-ring ladder covers a swallowed doorbell and escalates a worker that never
-# acknowledges. So unlike the notes-save message and the /compact command -
-# both of which must reach the harness's own parser through the live typed
-# plane - the ring deliberately does NOT wait on fm_idle_compact_safe_to_send:
-# a busy pane is exactly the case the durable record was designed for, and
-# gating the record behind a live pane verdict reintroduced the silent-defer
-# seam this feature exists to close. Success here means the record exists.
+# acknowledges. So unlike the `/compact` command - which must reach the
+# harness's own parser through the live typed plane - the ring deliberately
+# does NOT wait on fm_idle_compact_safe_to_send: a busy pane is exactly the
+# case the durable record was designed for, and gating the record behind a
+# live pane verdict reintroduced the silent-defer seam this feature exists to
+# close. Success here means the record exists.
 fm_idle_compact_ring_worker() {  # <state> <task>
   fm_idle_compact_send "$1" "$2" "$(fm_idle_compact_ring_message)"
 }
 
-# True when this task's inbox already holds the ring, unhandled or acknowledged.
-# The backstop below asks before re-sending, so a worker never receives the same
-# instruction twice because a marker field was lost.
-fm_idle_compact_ring_recorded() {  # <state> <task>
-  local state=$1 task=$2 dir f ring
+# Portable RFC3339/Zulu -> epoch, the same BSD/GNU date fallback idiom
+# bin/fm-public-followup-lib.sh's fm_pf_rfc3339_to_epoch already uses. Empty
+# input or an unparseable timestamp fails rather than guessing.
+_fm_idle_compact_rfc3339_to_epoch() {  # <rfc3339>
+  local ts=$1
+  [ -n "$ts" ] || return 1
+  date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$ts" +%s 2>/dev/null \
+    || date -u -d "$ts" +%s 2>/dev/null \
+    || return 1
+}
+
+# The record's own header `at=` field (bin/fm-task-inbox-lib.sh's record
+# format), read up to the `--` body separator so a body that happens to start
+# with literal text "at=" can never be mistaken for the header.
+_fm_idle_compact_inbox_record_at() {  # <record-path>
+  local line
+  [ -f "$1" ] || return 1
+  while IFS= read -r line; do
+    [ "$line" != -- ] || return 1
+    case "$line" in
+      at=*) printf '%s' "${line#at=}"; return 0 ;;
+    esac
+  done < "$1"
+  return 1
+}
+
+# True when this task's inbox already holds the ring for the CURRENT episode,
+# unhandled or acknowledged. Sequence numbers - and so handled/ records - are
+# never reused for a task's whole lifetime (bin/fm-task-inbox-lib.sh), so a
+# task that runs several idle-compact episodes across its life keeps every
+# earlier episode's ring record in handled/ too. Matching on the constant ring
+# body text alone would therefore find a PRIOR episode's already-acknowledged
+# ring and report "already recorded" for a later episode whose own ring
+# enqueue genuinely failed - silently reintroducing the never-rung failure
+# this backstop exists to close. <episode-epoch>, when given, scopes the match
+# to records whose `at=` timestamp is no older than the current episode's own
+# settle_epoch (set once, at the settling->done transition this backstop's
+# caller is examining), so an earlier episode's ring never satisfies this
+# check. Absent or unparseable data - a legacy marker predating settle_epoch,
+# or a record missing/malformed `at=` - falls back to the unscoped match
+# rather than risk the reverse failure (never ringing at all).
+fm_idle_compact_ring_recorded() {  # <state> <task> [episode-epoch]
+  local state=$1 task=$2 episode_epoch=${3:-} dir f ring at at_epoch
   ring=$(fm_idle_compact_ring_message)
   for dir in "$(fm_task_inbox_dir "$state" "$task")" \
              "$(fm_task_inbox_handled_dir "$state" "$task")"; do
@@ -460,6 +500,11 @@ fm_idle_compact_ring_recorded() {  # <state> <task>
     for f in "$dir"/*.msg; do
       [ -e "$f" ] || continue
       [ "$(fm_task_inbox_body "$f" 2>/dev/null)" = "$ring" ] || continue
+      if [ -n "$episode_epoch" ]; then
+        at=$(_fm_idle_compact_inbox_record_at "$f") || continue
+        at_epoch=$(_fm_idle_compact_rfc3339_to_epoch "$at") || continue
+        [ "$at_epoch" -ge "$episode_epoch" ] || continue
+      fi
       return 0
     done
   done
@@ -498,14 +543,16 @@ fm_idle_compact_log() {  # <state> <line>
 # and the inbox holds no ring record at all. Unlike an ordinary episode step it
 # logs, because a backstop firing means the primary path missed.
 fm_idle_compact_ring_backstop() {  # <state> <task> <marker>
-  local state=$1 task=$2 marker=$3 grace age
+  local state=$1 task=$2 marker=$3 grace age episode_epoch
   fm_idle_compact_declared_paused "$state" "$task" || return 0
   [ -z "$(fm_idle_compact_marker_field "$marker" ring_backstop)" ] || return 0
   grace=${FM_IDLE_COMPACT_RING_BACKSTOP_SECS:-600}
   case "$grace" in ''|*[!0-9]*) grace=600 ;; esac
   age=$(fm_path_age "$marker")
   [ "$age" -ge "$grace" ] || return 0
-  ! fm_idle_compact_ring_recorded "$state" "$task" || return 0
+  episode_epoch=$(fm_idle_compact_marker_field "$marker" settle_epoch)
+  case "$episode_epoch" in ''|*[!0-9]*) episode_epoch= ;; esac
+  ! fm_idle_compact_ring_recorded "$state" "$task" "$episode_epoch" || return 0
   fm_idle_compact_ring_worker "$state" "$task" || return 0
   fm_idle_compact_marker_set "$marker" ring_backstop "$(date +%s)" || true
   fm_idle_compact_log "$state" \
@@ -694,7 +741,8 @@ fm_idle_compact_advance_settling() {  # <state> <task> <marker>
 
   fm_idle_compact_marker_write "$marker" phase=done \
     "status_sig=$(fm_idle_compact_status_sig "$state" "$task")" \
-    "pane_sig=$(fm_idle_compact_pane_sig "$FM_IDLE_COMPACT_BACKEND" "$FM_IDLE_COMPACT_TARGET" "$FM_IDLE_COMPACT_LABEL")"
+    "pane_sig=$(fm_idle_compact_pane_sig "$FM_IDLE_COMPACT_BACKEND" "$FM_IDLE_COMPACT_TARGET" "$FM_IDLE_COMPACT_LABEL")" \
+    "settle_epoch=$settle_epoch"
   return 0
 }
 

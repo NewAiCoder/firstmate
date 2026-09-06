@@ -907,17 +907,28 @@ test_done_pane_change_clears_marker() {
 
 # Arranges a phase=done marker whose signatures match reality (so the episode is
 # a no-op) over a status log that still declares the compaction pause, aged
-# <marker-age> seconds. Echoes the marker path.
-arrange_done_declaring_pause() {  # <dir> <task> <marker-age>
-  local dir=$1 task=$2 age=$3 marker
+# <marker-age> seconds. Echoes the marker path. An optional <settle-epoch>
+# reproduces the field the real settling->done transition now persists
+# (fm_idle_compact_advance_settling), so a test can construct a SECOND
+# episode's marker distinguishable from an earlier episode's inbox records;
+# omitted, the marker carries no settle_epoch at all, matching a legacy marker.
+arrange_done_declaring_pause() {  # <dir> <task> <marker-age> [settle-epoch]
+  local dir=$1 task=$2 age=$3 settle_epoch=${4:-} marker
   write_task_meta "$dir/state" "$task"
   touch_status "$dir/state" "$task" 3600 \
     'paused: awaiting compaction before validation (commit 3985d693a, 1292 changed lines, over-cap accepted)'
   fm_idle_compact_task_context "$dir/state" "$task"
   marker=$(fm_idle_compact_marker_path "$dir/state" "$task")
-  fm_idle_compact_marker_write "$marker" phase=done \
-    "status_sig=$(fm_idle_compact_status_sig "$dir/state" "$task")" \
-    "pane_sig=$(fm_idle_compact_pane_sig "$FM_IDLE_COMPACT_BACKEND" "$FM_IDLE_COMPACT_TARGET" "$FM_IDLE_COMPACT_LABEL")"
+  if [ -n "$settle_epoch" ]; then
+    fm_idle_compact_marker_write "$marker" phase=done \
+      "status_sig=$(fm_idle_compact_status_sig "$dir/state" "$task")" \
+      "pane_sig=$(fm_idle_compact_pane_sig "$FM_IDLE_COMPACT_BACKEND" "$FM_IDLE_COMPACT_TARGET" "$FM_IDLE_COMPACT_LABEL")" \
+      "settle_epoch=$settle_epoch"
+  else
+    fm_idle_compact_marker_write "$marker" phase=done \
+      "status_sig=$(fm_idle_compact_status_sig "$dir/state" "$task")" \
+      "pane_sig=$(fm_idle_compact_pane_sig "$FM_IDLE_COMPACT_BACKEND" "$FM_IDLE_COMPACT_TARGET" "$FM_IDLE_COMPACT_LABEL")"
+  fi
   backdate "$marker" "$age"
   printf '%s' "$marker"
 }
@@ -999,6 +1010,43 @@ test_backstop_skips_when_the_ring_was_already_acknowledged() {
     [ ! -s "$log" ] \
       || fail "an acknowledged ring in handled/ still proves the worker was rung"
     pass "fm_idle_compact_ring_backstop: an acknowledged ring record in handled/ suppresses the re-send"
+  ) || exit 1
+}
+
+# Sequence numbers - and so handled/ records - are never reused for a task's
+# whole lifetime, so a task that runs a SECOND idle-compact episode keeps the
+# first episode's acknowledged ring on disk, same constant body text. A
+# second episode whose own ring enqueue genuinely failed must still be rung by
+# the backstop; the stale first episode's ring must never satisfy the check.
+test_backstop_ignores_a_prior_episodes_acknowledged_ring() {
+  (
+    local dir log rec handled marker
+    dir=$(new_dir backstop-prior-episode)
+    log="$dir/sends.log"; : > "$log"
+    fm_busy_classify() { printf 'idle claude-hook'; }
+    fm_backend_composer_state() { printf 'empty'; }
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600 \
+      'paused: awaiting compaction before validation (commit 3985d693a, 1292 changed lines, over-cap accepted)'
+
+    # Episode 1: rang and acknowledged.
+    rec=$(fm_task_inbox_write "$dir/state" t1 "$(fm_idle_compact_ring_message)")
+    handled=$(fm_task_inbox_handled_dir "$dir/state" t1)
+    mkdir -p "$handled" && mv "$rec" "$handled/"
+
+    # Episode 2's settle_epoch (fixed a few seconds ahead so it cannot land in
+    # the same wall-clock second as episode 1's `at=` write above, which is
+    # the only thing that timestamp comparison needs to tell them apart) is
+    # strictly after episode 1's ring was recorded, and its own settling->done
+    # ring enqueue genuinely failed - nothing new written to the inbox.
+    marker=$(arrange_done_declaring_pause "$dir" t1 1800 "$(( $(date +%s) + 5 ))")
+
+    fm_idle_compact_process_task "$dir/state" t1 30
+    grep -q 'compacted - start the validation run now' "$log" \
+      || fail "a second episode's genuinely missing ring must not be suppressed by a prior episode's acknowledged, textually identical ring"
+    pass "fm_idle_compact_ring_backstop: a prior episode's acknowledged ring never suppresses a later episode's missing ring"
   ) || exit 1
 }
 
@@ -1526,6 +1574,7 @@ test_backstop_fires_on_a_stale_done_episode_with_no_ring_record
 test_backstop_does_not_fire_on_a_fresh_done_episode
 test_backstop_skips_when_the_inbox_already_holds_the_ring
 test_backstop_skips_when_the_ring_was_already_acknowledged
+test_backstop_ignores_a_prior_episodes_acknowledged_ring
 test_backstop_fires_at_most_once_per_episode
 test_backstop_ignores_a_status_that_no_longer_declares_the_pause
 
