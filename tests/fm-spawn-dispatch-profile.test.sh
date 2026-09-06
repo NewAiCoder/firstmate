@@ -131,7 +131,7 @@ test_no_profile_keeps_claude_profile_defaults() {
   assert_meta_profile "$HOME_DIR/state/$id.meta" claude default default
 
   launch=$(cat "$LAUNCH_LOG")
-  expected="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\"}' --setting-sources project,local --strict-mcp-config --mcp-config '/tmp/fm-$id/mcp.json' \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/launch-brief.md')\""
+  expected="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}' --setting-sources project,local --strict-mcp-config --mcp-config '/tmp/fm-$id/mcp.json' \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/launch-brief.md')\""
   [ "$launch" = "$expected" ] || fail "no-profile claude launch did not use the canonical launch kind"$'\n'"expected: $expected"$'\n'"actual:   $launch"
   pass "no --model/--effort records defaults and types the claude launch instructions"
 }
@@ -395,7 +395,7 @@ test_claude_threads_model_and_effort() {
   expect_code 0 "$status" "claude spawn with profile flags should succeed"
   assert_meta_profile "$HOME_DIR/state/$id.meta" claude sonnet high
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\"}' --setting-sources project,local --strict-mcp-config --mcp-config '/tmp/fm-$id/mcp.json' --model 'sonnet' --effort 'high'" \
+  assert_contains "$launch" "claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}' --setting-sources project,local --strict-mcp-config --mcp-config '/tmp/fm-$id/mcp.json' --model 'sonnet' --effort 'high'" \
     "claude launch did not thread model and effort flags"
   assert_not_contains "$launch" "--tui-mode" "non-Pi launches must not receive Pi's TUI mode override"
   pass "claude receives --model and --effort profile flags"
@@ -739,7 +739,7 @@ test_claude_forwards_firstmate_config_dir_when_set() {
   status=$?
   expect_code 0 "$status" "claude spawn with CLAUDE_CONFIG_DIR set should succeed"
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "CLAUDE_CONFIG_DIR='$CASE_DIR/claude-work' env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\"}'" \
+  assert_contains "$launch" "CLAUDE_CONFIG_DIR='$CASE_DIR/claude-work' env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}'" \
     "claude launch did not forward firstmate's CLAUDE_CONFIG_DIR to the crewmate pane"
   pass "claude forwards firstmate's CLAUDE_CONFIG_DIR so the crewmate uses the same credential store"
 }
@@ -826,6 +826,51 @@ test_claude_secondmate_keeps_full_settings_surface_and_skips_hook_mirroring() {
   pass "a secondmate claude launch keeps the full settings surface and skips hook mirroring"
 }
 
+# The captain's attribution policy lives in the `user` settings scope, which a
+# crewmate launch deliberately drops. Every claude launch must therefore carry the
+# policy itself, or a spawned worker writes Co-Authored-By and Claude-Session
+# trailers into commits and PR bodies.
+assert_attribution_policy() {  # <launch-command> <what>
+  local launch=$1 what=$2
+  assert_contains "$launch" '"attribution":' "$what launch carries no attribution policy"
+  assert_contains "$launch" '"commit":""' "$what launch does not silence the commit trailer"
+  assert_contains "$launch" '"pr":""' "$what launch does not silence the PR-body attribution"
+  assert_contains "$launch" '"sessionUrl":false' "$what launch does not silence the session URL"
+}
+
+test_claude_crewmate_launch_carries_the_attribution_policy() {
+  local rec id out status launch
+  id=profile-claude-attribution-z22
+  rec=$(make_spawn_case profile-claude-attribution claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "claude crewmate spawn should succeed"$'\n'"$out"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "--setting-sources project,local" \
+    "this case only proves anything while the crewmate launch drops the user settings scope"
+  assert_attribution_policy "$launch" "claude crewmate"
+  pass "a claude crewmate launch carries the attribution-off policy in its own settings"
+}
+
+test_claude_secondmate_launch_carries_the_attribution_policy() {
+  local rec id sm out status launch
+  id=profile-secondmate-attribution-z23
+  rec=$(make_spawn_case profile-secondmate-attribution claude "$id")
+  read_case_record "$rec"
+  sm="$CASE_DIR/secondmate-home"
+  make_seeded_secondmate_home "$sm" "$id"
+
+  out=$(FM_TEST_CLAUDE_CONFIG_DIR="$CASE_DIR/claude-work" \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate)
+  status=$?
+  expect_code 0 "$status" "secondmate claude spawn should succeed"$'\n'"$out"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_attribution_policy "$launch" "claude secondmate"
+  pass "a claude secondmate launch carries the attribution-off policy too"
+}
+
 test_active_dispatch_profile_does_not_block_secondmate_launch() {
   local rec id sm out status
   id=profile-secondmate-z16
@@ -876,6 +921,8 @@ test_claude_omits_config_dir_prefix_when_unset
 test_non_claude_harness_ignores_config_dir
 test_claude_mirrors_user_scope_safety_hooks
 test_claude_secondmate_keeps_full_settings_surface_and_skips_hook_mirroring
+test_claude_crewmate_launch_carries_the_attribution_policy
+test_claude_secondmate_launch_carries_the_attribution_policy
 test_active_dispatch_profile_does_not_block_secondmate_launch
 
 echo "# all fm-spawn-dispatch-profile tests passed"

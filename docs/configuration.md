@@ -466,6 +466,8 @@ Dropping the `user` settings scope also drops any hook the captain registered th
 To keep those firing, `fm-spawn.sh` mirrors every hook from the captain's own user-scope `settings.json` (`$CLAUDE_CONFIG_DIR/settings.json` when set, else `~/.claude/settings.json`) into the per-task `.claude/settings.local.json` it writes for the worktree, merged with firstmate's own busy-state hooks rather than replacing them; an event registered on both sides keeps both hook groups.
 This requires `jq`; a claude crewmate/scout/ship spawn refuses rather than launch with the mirrored hooks silently dropped when `jq` is unavailable or the captain's settings.json fails to parse.
 
+Every claude launch's inline `--settings` JSON also carries `"attribution":{"commit":"","pr":"","sessionUrl":false}`, so a spawned worker never writes a Co-Authored-By trailer, Claude-Session link, or generated-with line into a commit or PR body regardless of which settings scopes end up loaded; this rides both the minimal and the full (secondmate) surface below because the setting is carried per launch rather than inherited from a scope.
+
 A secondmate is exempt from the whole minimal-surface change: it launches on the full, pre-D6 settings surface (no `--setting-sources`, no `--strict-mcp-config`, no per-task MCP config), so it keeps every plugin skill and MCP server the captain's own settings enable, and its `.claude/settings.local.json` never needs the hook-mirroring step above because the native `user` scope is still loaded.
 This is deliberate: a secondmate charter has no `## Firstmate spec` `tools:` line to widen a minimal surface from, and a secondmate is a long-lived home rather than a single narrow task, so the cold-prefix saving does not apply the same way.
 
