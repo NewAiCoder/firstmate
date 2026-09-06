@@ -338,11 +338,12 @@ fm_idle_compact_activity_age() {  # <state> <task>
   fm_last_activity_age "$(date +%s)" "$@"
 }
 
-# True only when the task's own status log's latest line is the exact
-# declared-state phrase a no-mistakes ship brief tells a worker to append
-# right after its implementation commit, before starting no-mistakes. See
-# this file's header comment ("Declared-state fast path") for the full
-# contract; bin/fm-dod-lib.sh's no-mistakes block is the phrase's one owner.
+# True only when the task's own status log's latest line is the declared-state
+# phrase a no-mistakes ship brief tells a worker to append right after its
+# implementation commit, before starting no-mistakes, matched as a prefix
+# ending on a word boundary. See this file's header comment ("Declared-state
+# fast path") for the full contract; bin/fm-dod-lib.sh's no-mistakes block is
+# the phrase's one owner.
 fm_idle_compact_declared_paused() {  # <state> <task>
   local statusf="$1/$2.status" line
   [ -f "$statusf" ] || return 1
@@ -686,7 +687,8 @@ fm_idle_compact_advance_save_sent() {  # <state> <task> <marker> <threshold-minu
     # activity still clears phase=done the normal way.
     fm_idle_compact_marker_write "$marker" phase=done \
       "status_sig=$(fm_idle_compact_status_sig "$state" "$task")" \
-      "pane_sig=$(fm_idle_compact_pane_sig "$FM_IDLE_COMPACT_BACKEND" "$FM_IDLE_COMPACT_TARGET" "$FM_IDLE_COMPACT_LABEL")"
+      "pane_sig=$(fm_idle_compact_pane_sig "$FM_IDLE_COMPACT_BACKEND" "$FM_IDLE_COMPACT_TARGET" "$FM_IDLE_COMPACT_LABEL")" \
+      "settle_epoch=$(date +%s)"
     return 0
   fi
 
