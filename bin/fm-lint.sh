@@ -104,10 +104,14 @@ fm_lint_worker_stop() {
 # elapsed-time check below (SECONDS, not the alarm's mere arrival) is the
 # actual timeout verdict, so even an uncanceled stray alarm from an earlier
 # file can only cause a harmless spurious re-wait here, never a false
-# timeout. ShellCheck itself does not fork children, so a direct kill of its
+# timeout. Since SECONDS only has 1-second resolution, a spurious wake can
+# also land just short of the verdict on a genuine deadline; the loop then
+# re-arms a fresh alarm for the remaining time before waiting again, so a
+# hung file is still bounded rather than falling through to an unguarded
+# `wait`. ShellCheck itself does not fork children, so a direct kill of its
 # own pid is sufficient to stop it.
 fm_lint_run_one_file() {  # <mem-kb> <timeout-s> <output-file> <path> -- <shellcheck-arg>...
-  local mem_kb=$1 timeout_s=$2 output=$3 path=$4 rc=0 current alarm_pid start timed_out=0
+  local mem_kb=$1 timeout_s=$2 output=$3 path=$4 rc=0 current alarm_pid start timed_out=0 remaining
   shift 4
   [ "${1:-}" != -- ] || shift
   local -a shellcheck_args=("$@")
@@ -141,9 +145,17 @@ fm_lint_run_one_file() {  # <mem-kb> <timeout-s> <output-file> <path> -- <shellc
       rc=$?
       break
     fi
-    # A stray alarm from an earlier, already-finished file woke this wait
-    # early; ShellCheck is still running and its own deadline has not
-    # arrived, so loop back and keep waiting on it.
+    # A stray alarm from an earlier, already-finished file (or this file's
+    # own alarm, whose one-shot `sleep` can race SECONDS' 1-second
+    # resolution) woke this wait early; ShellCheck is still running and its
+    # own deadline has not arrived, so re-arm a fresh alarm for the
+    # remaining time and keep waiting on it - the fired alarm is one-shot,
+    # so without this a genuinely hung file would otherwise wait unbounded.
+    remaining=$((timeout_s - (SECONDS - start)))
+    [ "$remaining" -ge 1 ] || remaining=1
+    ( sleep "$remaining"; kill -ALRM $$ 2>/dev/null ) > /dev/null 2>&1 &
+    alarm_pid=$!
+    disown "$alarm_pid" 2>/dev/null || true
   done
   pkill -TERM -P "$alarm_pid" 2>/dev/null || true
   kill "$alarm_pid" 2>/dev/null || true
