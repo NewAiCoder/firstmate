@@ -539,6 +539,45 @@ test_benign_cycle_end_with_live_watcher_is_silent() {
   pass "auto-arm: benign cycle end with a live watcher and fresh beacon stays silent across the next cycle"
 }
 
+# bin/fm-watch.sh touches the beacon once per cycle, immediately before its
+# terminal wait as well as at the top of the next one, so a healthy watcher's
+# beacon can legitimately age up to FM_POLL seconds between touches. A home
+# configured with a long poll (FM_POLL=300, matching the historical fixed
+# grace default) must not have this hook call that watcher stale at the edge
+# of every full wait: the default grace must scale with FM_POLL instead.
+test_healthy_beacon_at_full_poll_wait_is_not_reported_stale() {
+  local dir out out2 status status2 pid identity beat
+  dir=$(make_primary_dir "$TMP_ROOT/full-poll-wait")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" benign-live
+  sleep 60 &
+  pid=$!
+  identity=$(watcher_identity "$dir" "$pid") || fail "could not identify live watcher holder for full-poll-wait"
+  record_watcher_lock "$dir" "$pid" "$identity"
+  # A beacon touched exactly one full FM_POLL=300 cycle ago is precisely what
+  # a perfectly healthy watcher's beacon looks like right at the edge of its
+  # terminal wait - not evidence of a hung or dead watcher.
+  beat=$(( $(date +%s) - 300 ))
+  touch -d "@$beat" "$dir/state/.last-watcher-beat"
+  : > "$dir/state/.claude-autoarm-failure-notified"
+  : > "$dir/state/.claude-autoarm-failure-alarmed"
+  # FM_GUARD_GRACE cleared so this exercises the hook's actual default rather
+  # than whatever this test process happened to inherit from its own caller
+  # (e.g. a home carrying the FM_GUARD_GRACE=700 workaround this fix retires).
+  out=$(FM_GUARD_GRACE='' FM_POLL=300 run_autoarm "$dir" 2>/dev/null); status=$?
+  out2=$(FM_GUARD_GRACE='' FM_POLL=300 run_autoarm "$dir" 2>/dev/null); status2=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 0 "$status" "a beacon aged exactly one FM_POLL=300 cycle must read healthy, not stale"
+  expect_code 0 "$status2" "the next Stop-owned cycle must also read the same watcher healthy"
+  [ -z "$out" ] || fail "a beacon aged one full poll wait produced an operator notice: $out"
+  [ -z "$out2" ] || fail "the next cycle produced an operator notice: $out2"
+  [ "$(epoch_outcome "$dir")" = clean ] || fail "a beacon aged one full poll wait must record outcome=clean, got: $(epoch_outcome "$dir")"
+  [ ! -e "$dir/state/.claude-autoarm-failure-notified" ] || fail "a healthy full-poll-wait beacon must not leave a failure-notice marker"
+  [ ! -e "$dir/state/.claude-autoarm-failure-alarmed" ] || fail "a healthy full-poll-wait beacon must not leave an attended-alarm marker"
+  pass "auto-arm: a beacon aged exactly one FM_POLL=300 cycle is not reported stale"
+}
+
 test_positive_recovery_budget_contention_preserves_episode() {
   local dir out status pid identity holder
   dir=$(make_primary_dir "$TMP_ROOT/recovery-budget-contention")
@@ -1165,6 +1204,7 @@ test_failure_notice_marker_write_refuses_delivery_and_retries
 test_unverified_clean_close_exhausts_retries
 test_post_alarm_actionable_close_is_suppressed
 test_benign_cycle_end_with_live_watcher_is_silent
+test_healthy_beacon_at_full_poll_wait_is_not_reported_stale
 test_positive_recovery_budget_contention_preserves_episode
 test_owner_mutex_contention_preserves_failure_episode_reset
 test_arms_for_x_mode_poll_need_without_inflight
