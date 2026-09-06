@@ -1425,6 +1425,7 @@ test_watch_tick_call_site_delivers_the_ring_end_to_end() {
 
     # The exact call bin/fm-watch.sh's poll loop makes: fm_idle_compact_tick
     # "$STATE" || true, against the STATE/CONFIG this sourcing resolved.
+    # shellcheck disable=SC2153 # STATE is assigned by sourcing bin/fm-watch.sh above, not a typo of $state
     fm_idle_compact_tick "$STATE" || true
     [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'settling' ] \
       || fail "bin/fm-watch.sh's tick call site must send /compact and record phase=settling"
@@ -1497,6 +1498,7 @@ test_tick_held_sweep_lock_defers_whole_sweep() {
     log="$dir/sends.log"; : > "$log"
     stub_always_safe
     stub_recording_send "$log"
+    # shellcheck disable=SC2034 # read by fm_idle_compact_eligible in the sourced fm-idle-compact.sh library
     FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: parked")
     printf '30\n' > "$dir/config/idle-compact"
 
