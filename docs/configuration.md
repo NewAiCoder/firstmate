@@ -299,6 +299,14 @@ A hard stop at 3 would have converted "caught before merge" into "shipped".
 Deferred findings go to one rolling `Deferred pipeline findings` issue per project, one checklist entry each, carrying run id, round, PR or branch, `file:line`, the finding id slug, the gate's own severity and action, the description verbatim, and a `still-true-as-of-HEAD: unknown` flag.
 A weekly small-batch lane clears it. The telemetry store's `v_late_rounds` detector fires for any run that passes round 3, so the cap's effect is visible in the review page rather than asserted.
 
+### Lane size: target, cap, and telemetry
+
+`bin/fm-diff-size-lib.sh` is the one owner of the lane-size thresholds, so the brief scaffold, the worker's own pre-run check, and the telemetry row cannot drift apart: 400 changed lines is the target a lane is shaped toward, and 800 is where a worker stops and asks firstmate to split rather than pushing on. Its header owns the measured rationale (portfolio-tracker's median merged PR was 1,026 changed lines against 9.6 review rounds per run, versus 491 lines and 6.7 rounds for a project shaped toward the target).
+
+`bin/fm-brief.sh` warns at scaffold time, when splitting is still cheap, whenever a `ship`-kind brief carries more than 5 acceptance items (`FM_BRIEF_ACCEPTANCE_ITEMS`); it never refuses, because firstmate may have a good reason. The generated no-mistakes Definition-of-done block also tells the worker to run `bin/fm-diff-size-check.sh <worktree>` before its first `no-mistakes axi run`; the check always exits 0 and prints one of `ok`, `over-target`, or `over-cap`. `over-cap` (over 800 changed lines) is a stop-and-ask-firstmate point, not a refusal or a gate — the worker notes the size and lets firstmate decide whether to split.
+
+`bin/fm-lane-size-record.sh`, called best-effort from `bin/fm-pr-check.sh` at PR open, records the lane's changed-line and file counts into the telemetry store's `lanes` table, joined to rounds and tokens by project and task id, so the size-drives-rounds effect above is measured rather than asserted.
+
 ## Captain Preferences (data/captain.md / data/captain-shared.md)
 
 Domain-local preferences for one captain's fleet live locally in each home's `data/captain.md`; it is gitignored and printed in the session-start context digest after `data/projects.md` and optional `data/secondmates.md`.
