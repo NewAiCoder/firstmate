@@ -48,6 +48,18 @@
 # to the project's tracked content, so hard rule 1 does not apply, same as the
 # existing worktree-entry write.
 #
+# THAT SAME PROJECT ENTRY IS ALSO THE LAUNCHING HUMAN'S OWN INTERACTIVE
+# CONFIG, though, so this registration must never overwrite a decision the
+# human already made there. If the project entry already carries
+# hasClaudeMdExternalIncludesApproved===false - Claude Code only ever writes
+# that on an explicit "No, disable" answer - the whole registration refuses
+# rather than flipping it, because doing so would grant every future
+# interactive session in that checkout silent external-file inclusion the
+# human declined, permanently and without being asked. The worktree entry is
+# left unwritten too: the spawn wedges on the dialog, which is the honest
+# outcome given a standing decline, not registered trust with a stripped
+# consent record.
+#
 # THE SCOPE TEST IS THE SAFETY PROPERTY, and it is STRUCTURAL rather than a
 # path policy. <worktree> must be a LINKED git worktree - its own git dir,
 # sharing <project>'s common dir - whose top level is exactly the resolved
@@ -280,6 +292,17 @@ const setFlags = (projects, key) => {
 };
 const flagsLanded = (projects, key) =>
   flagKeys.every((flag) => projects?.[key]?.[flag] === true);
+// The project entry is the launching user's OWN interactive config, not a
+// throwaway worktree, so a spawn must never silently reverse a decision the
+// human already recorded there. hasClaudeMdExternalIncludesApproved===false
+// is exactly that decision (Claude Code only ever writes it on an explicit
+// "No, disable" answer); flipping it to true would grant every future
+// interactive session in that checkout silent external-file inclusion the
+// human declined. Refuse the whole registration instead of overriding it -
+// the worktree entry is not written either, so the spawn wedges on the
+// dialog rather than the human's consent being spent without being asked.
+const declinedExternalImports = (projects, key) =>
+  projects?.[key]?.hasClaudeMdExternalIncludesApproved === false;
 const attempt = () => {
   const original = readStore();
   const before = fingerprint(original);
@@ -297,6 +320,11 @@ const attempt = () => {
   const projects = root.projects;
   if (projects === null || typeof projects !== "object" || Array.isArray(projects)) {
     throw new Error(`${store} has a non-object "projects" value`);
+  }
+  if (declinedExternalImports(projects, project)) {
+    throw new Error(
+      `project entry for ${project} in ${store} already declined external CLAUDE.md imports; refusing to override that consent`,
+    );
   }
   setFlags(projects, worktree);
   setFlags(projects, project);

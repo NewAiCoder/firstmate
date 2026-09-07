@@ -145,6 +145,32 @@ JSON
   pass "fm-claude-trust.sh: preserves unrelated keys on the project-root entry"
 }
 
+# hasClaudeMdExternalIncludesApproved===false on the project-root entry is a
+# human's explicit "No, disable" answer, recorded in the SAME store their own
+# interactive sessions read. A spawn must never flip that to true on their
+# behalf: doing so would grant every later interactive session in that
+# checkout silent external-file inclusion the human declined. The whole
+# registration refuses instead, and the store - including the worktree entry,
+# which is never reached - must come back byte-for-byte unchanged.
+test_project_root_entry_declined_external_imports_is_not_overridden() {
+  local rec store out before after
+  rec=$(make_case project-decline)
+  read_case "$rec"
+  store="$CONFIG/.claude.json"
+  cat > "$store" <<JSON
+{"hasCompletedOnboarding":true,"projects":{"$PROJ":{"hasTrustDialogAccepted":true,"hasClaudeMdExternalIncludesApproved":false,"hasClaudeMdExternalIncludesWarningShown":true,"allowedTools":["Read"]}}}
+JSON
+  before=$(cat "$store")
+  out=$(run_trust "$CONFIG" "$WT" "$PROJ")
+  expect_code 1 $? "a project that already declined external imports must be refused: $out"
+  assert_contains "$out" "declined external CLAUDE.md imports" \
+    "the refusal did not name the declined-consent reason"
+  after=$(cat "$store")
+  [ "$before" = "$after" ] || fail "the store was modified despite the refusal"
+  assert_not_trusted "$store" "$WT" "the worktree entry was registered despite the refusal"
+  pass "fm-claude-trust.sh: refuses to override a project's declined external-imports consent"
+}
+
 test_registration_is_idempotent() {
   local rec out count
   rec=$(make_case idempotent)
@@ -519,6 +545,7 @@ test_claude_spawn_pretrusts_its_worktree_and_reaches_the_brief() {
 test_fresh_worktree_is_trusted
 test_fresh_worktree_also_approves_the_project_root
 test_project_root_entry_preserves_other_keys
+test_project_root_entry_declined_external_imports_is_not_overridden
 test_registration_is_idempotent
 test_primary_checkout_is_refused
 test_cdpath_cannot_defeat_the_primary_checkout_refusal
