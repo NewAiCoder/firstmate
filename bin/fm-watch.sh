@@ -1671,9 +1671,9 @@ while :; do
     if procevent_reconcile_err=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-procevent.sh" reconcile 2>&1 >/dev/null); then
       rm -f "$procevent_reconcile_marker" 2>/dev/null || true
     elif [ ! -e "$procevent_reconcile_marker" ]; then
-      : > "$procevent_reconcile_marker" 2>/dev/null || true
       reason="check: process-event reconcile failed: $(printf '%s' "$procevent_reconcile_err" | tail -n 1)"
       fm_wake_append check procevent-reconcile "$reason" || exit 1
+      : > "$procevent_reconcile_marker" 2>/dev/null || true
       touch "$STATE/.last-check"
       wake "$reason"
     fi
