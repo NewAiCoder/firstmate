@@ -430,14 +430,12 @@ assert_present() {
 # assertions that simulate a tool as absent - every other case keeps using
 # bare BASE_PATH.
 fm_test_base_path_sans() {
-  local base_path=$1 dir src entry name tool skip old_ifs
+  local base_path=$1 dir src entry name tool skip
   shift
   local tools=("$@")
   dir=$(fm_test_tmproot fm-base-path-sans) || return 1
-  old_ifs=$IFS
-  IFS=:
-  local dirs=($base_path)
-  IFS=$old_ifs
+  local dirs
+  IFS=: read -ra dirs <<< "$base_path"
   for src in "${dirs[@]}"; do
     [ -d "$src" ] || continue
     for entry in "$src"/*; do
