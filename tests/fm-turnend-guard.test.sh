@@ -1980,6 +1980,95 @@ test_hook_daemon_lock_is_ignored_without_away_mode() {
   pass "fm-turnend-guard: a daemon lock proves nothing while away mode is off"
 }
 
+# --- AWAY MODE: beacon grace derives from the poll cadence -------------------
+#
+# The daemon starts a fresh one-shot watcher only after it finishes handling
+# the previous wake, and that handling can legitimately outrun a flat 300s
+# window under load (a slow registered check, a busy supervisor pane) with the
+# daemon perfectly healthy throughout (fm-turnend-guard-afk-race). The guard
+# must accept a live daemon there once FM_POLL justifies the wider window, but
+# must still block a dead daemon or a beacon older than that wider grace.
+
+test_hook_away_daemon_allows_beacon_within_poll_derived_grace() {
+  local dir pid out status beat
+  dir=$(make_away_home_between_cycles "$TMP_ROOT/hook-afk-poll-grace-healthy")
+  sleep 60 &
+  pid=$!
+  record_daemon_lock "$dir" "$pid" || {
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "could not identify live away-mode daemon holder"
+  }
+  # 400s is stale under the flat 300s default, but not under the poll-derived
+  # grace (max(300, FM_POLL + 60) = 660 at FM_POLL=600) - a live daemon that
+  # simply has not finished restarting its watcher yet.
+  beat=$(( $(date +%s) - 400 ))
+  touch -d "@$beat" "$dir/state/.last-watcher-beat"
+  out=$(FM_GUARD_GRACE='' FM_POLL=600 run_hook "$dir" false); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 0 "$status" "a live daemon with a beacon within the poll-derived grace must not block"
+  [ -z "$out" ] || fail "away-mode daemon within poll-derived grace still produced a block banner: $out"
+  pass "fm-turnend-guard: away-mode beacon freshness uses the poll-derived grace, not the flat default"
+}
+
+test_hook_away_daemon_blocks_dead_daemon_despite_poll_derived_grace() {
+  local dir dead out status
+  dir=$(make_away_home_between_cycles "$TMP_ROOT/hook-afk-poll-grace-dead-daemon")
+  dead=$(nonexistent_pid)
+  record_daemon_lock "$dir" "$dead" "dead daemon identity"
+  out=$(FM_GUARD_GRACE='' FM_POLL=600 run_hook "$dir" false); status=$?
+  expect_code 2 "$status" "a wider poll-derived grace must not paper over a dead daemon"
+  assert_contains "$out" "$AWAY_REQUIRED_REASON" "away-mode block must point at the daemon, not normal supervision"
+  pass "fm-turnend-guard: a dead away-mode daemon still blocks under the poll-derived grace"
+}
+
+test_hook_away_daemon_blocks_beacon_older_than_poll_derived_grace() {
+  local dir pid out status beat
+  dir=$(make_away_home_between_cycles "$TMP_ROOT/hook-afk-poll-grace-stale")
+  sleep 60 &
+  pid=$!
+  record_daemon_lock "$dir" "$pid" || {
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "could not identify live away-mode daemon holder"
+  }
+  # 700s exceeds even the wider poll-derived grace (660 at FM_POLL=600), so a
+  # live daemon that has genuinely stopped restarting its watcher still blocks.
+  beat=$(( $(date +%s) - 700 ))
+  touch -d "@$beat" "$dir/state/.last-watcher-beat"
+  out=$(FM_GUARD_GRACE='' FM_POLL=600 run_hook "$dir" false); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 2 "$status" "a beacon older than the poll-derived grace must still block"
+  assert_contains "$out" "$AWAY_REQUIRED_REASON" "away-mode block must point at the daemon, not normal supervision"
+  pass "fm-turnend-guard: the poll-derived grace is bounded, not unlimited"
+}
+
+test_hook_no_afk_ignores_poll_derived_grace() {
+  local dir pid out status beat
+  dir=$(make_away_home_between_cycles "$TMP_ROOT/hook-no-afk-poll-grace")
+  rm -f "$dir/state/.afk"
+  sleep 60 &
+  pid=$!
+  record_daemon_lock "$dir" "$pid" || {
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "could not identify live daemon holder"
+  }
+  # 400s would be within the poll-derived grace the away-mode branch would
+  # accept, but away mode is off here, so the strict watcher predicate and its
+  # flat default govern instead - old behavior, unaffected by FM_POLL.
+  beat=$(( $(date +%s) - 400 ))
+  touch -d "@$beat" "$dir/state/.last-watcher-beat"
+  out=$(FM_GUARD_GRACE='' FM_POLL=600 run_hook "$dir" false); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 2 "$status" "without .afk, FM_POLL must not widen the strict watcher predicate's grace"
+  assert_contains "$out" "$REQUIRED_REASON" "block reason must contain the exact required instruction"
+  pass "fm-turnend-guard: with away mode off, the poll-derived grace never applies"
+}
+
 test_predicate_healthy_no_inflight
 test_predicate_unhealthy_no_beacon
 test_predicate_unhealthy_stale_beacon
@@ -2063,3 +2152,7 @@ test_hook_away_mode_blocks_on_dead_daemon
 test_hook_away_mode_blocks_on_pid_reused_daemon
 test_hook_away_mode_blocks_on_stale_beacon
 test_hook_daemon_lock_is_ignored_without_away_mode
+test_hook_away_daemon_allows_beacon_within_poll_derived_grace
+test_hook_away_daemon_blocks_dead_daemon_despite_poll_derived_grace
+test_hook_away_daemon_blocks_beacon_older_than_poll_derived_grace
+test_hook_no_afk_ignores_poll_derived_grace

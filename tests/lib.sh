@@ -462,3 +462,43 @@ assert_absent() {
 assert_present() {
   [ -e "$1" ] || fail "$2"
 }
+
+# fm_test_base_path_sans <base_path> <tool...>: returns the path to a single
+# curated directory that resolves every tool <base_path> would have resolved,
+# except the named ones. Some hosts have real system binaries (node, orca,
+# ...) sitting in BASE_PATH; a fixture that simulates a tool as missing by
+# omitting it from fakebin still falls through to that host binary via
+# BASE_PATH, silently defeating the simulation. Dropping whole directories
+# out of BASE_PATH is not a safe fix: on a usr-merged host /bin, /sbin, and
+# /usr/sbin are symlinks that collapse to the same directory as /usr/bin, so
+# dropping any one of them because it resolves the excluded tool drops every
+# other tool a test still needs (git, awk, sed, ...) too. Building a curated
+# directory instead hides only the named tool(s). Use only at the specific
+# assertions that simulate a tool as absent - every other case keeps using
+# bare BASE_PATH.
+fm_test_base_path_sans() {
+  local base_path=$1 dir src entry name tool skip
+  shift
+  local tools=("$@")
+  dir=$(fm_test_tmproot fm-base-path-sans) || return 1
+  local dirs
+  IFS=: read -ra dirs <<< "$base_path"
+  for src in "${dirs[@]}"; do
+    [ -d "$src" ] || continue
+    for entry in "$src"/*; do
+      [ -e "$entry" ] || [ -L "$entry" ] || continue
+      name=${entry##*/}
+      [ -e "$dir/$name" ] && continue
+      skip=0
+      for tool in "${tools[@]}"; do
+        if [ "$name" = "$tool" ]; then
+          skip=1
+          break
+        fi
+      done
+      [ "$skip" -eq 1 ] && continue
+      ln -s "$entry" "$dir/$name" 2>/dev/null || true
+    done
+  done
+  printf '%s\n' "$dir"
+}

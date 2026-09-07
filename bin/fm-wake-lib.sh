@@ -104,6 +104,25 @@ fm_path_age() {
   echo $(( $(date +%s) - m ))
 }
 
+# fm_poll_derived_grace [poll-seconds]
+# Default guard-grace derivation: max(300, poll + 60). A watcher touches its
+# liveness beacon once per poll cycle, so a fixed 300s grace stops correctly
+# bounding staleness once the poll cadence reaches or exceeds it; growing the
+# default with the cadence while keeping the historical 300s floor for the
+# common short-poll case fixes that without a caller-specific constant.
+# Defaults to $FM_POLL (fm-watch.sh's own poll env var) when no argument is
+# given, so a caller with no independent notion of the poll cadence still
+# derives the same default fm-watch.sh itself would use.
+# docs/turnend-guard.md "Guard grace and the poll cadence" is the single owner
+# of the rationale; every FM_GUARD_GRACE default should derive from this.
+fm_poll_derived_grace() {
+  local poll=${1:-${FM_POLL:-15}} margin=60 derived
+  case "$poll" in ''|*[!0-9]*) poll=15 ;; esac
+  derived=$((poll + margin))
+  [ "$derived" -ge 300 ] || derived=300
+  printf '%s\n' "$derived"
+}
+
 # fm_watcher_lock_unheld <state>
 # True when the watcher lock or its symlinked owner directory is absent, or when
 # the existing lock records no pid at all. Any non-empty pid remains held here;
