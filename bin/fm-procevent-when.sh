@@ -54,6 +54,11 @@
 #            flow; this primitive only automates the deterministic subset.
 #            The registered runner starts on the watcher's next cycle via
 #            `fm-procevent.sh reconcile`; arm never blocks on the condition.
+#            Refuses loudly, before registering anything, when the state root
+#            fails fm-procevent.sh's own private-directory check (e.g. a
+#            group/world-writable state/) - that check would otherwise reject
+#            every later reconcile identically, leaving a registered watch
+#            that can never be polled.
 # classify   Print the captured outcome class a handler should act on:
 #            fired, action-failed, condition-error, never-true, ambiguous,
 #            rejected, or unknown.
@@ -237,6 +242,14 @@ cmd_arm() {
   done
 
   [ -d "$STATE" ] && [ ! -L "$STATE" ] || die "state directory is unavailable"
+  # A watch registered here starts only on the watcher's own reconcile cycle
+  # (see the `arm` usage note above), and that cycle's fm-procevent.sh runner
+  # refuses to operate against a group/world-writable state root. Registering
+  # against a state root that already fails that check would create a watch
+  # that can never be polled, with no clear signal why - fail loudly here
+  # instead, using the exact same check fm-procevent.sh applies to itself.
+  fm_procevent_state_root_resolve "$STATE" >/dev/null \
+    || die "process-event state root is not a private directory - chmod 750 $STATE, then re-arm"
   fm_procevent_source_lock_acquire "$sid" || die "cannot lock the watch source"
   trap 'fm_procevent_source_lock_release "$sid"' EXIT
   local leftover
