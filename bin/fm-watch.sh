@@ -181,18 +181,11 @@ POLL=${FM_POLL:-15}                   # seconds between cycles
 # The liveness beacon is touched once per cycle, immediately before the
 # terminal wait below (event_wait_or_sleep) as well as at the top of the next
 # one, so a healthy cycle's beacon can legitimately age up to POLL seconds
-# between touches. A fixed 300s default grace stops correctly bounding
-# staleness once POLL itself reaches or exceeds it - see
-# docs/turnend-guard.md "Guard grace and the poll cadence" and the identical
-# derivation in bin/fm-claude-stop-autoarm.sh (duplicated here so this
-# script's own pre-acquisition staleness check is correct even when it is
-# started directly, without going through that hook).
-GUARD_GRACE_POLL_MARGIN=60
-POLL_FOR_GRACE=$POLL
-case "$POLL_FOR_GRACE" in ''|*[!0-9]*) POLL_FOR_GRACE=15 ;; esac
-DEFAULT_GUARD_GRACE=$((POLL_FOR_GRACE + GUARD_GRACE_POLL_MARGIN))
-[ "$DEFAULT_GUARD_GRACE" -ge 300 ] || DEFAULT_GUARD_GRACE=300
-WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-$DEFAULT_GUARD_GRACE}}
+# between touches. fm_poll_derived_grace (bin/fm-wake-lib.sh, already sourced
+# transitively via fm-idle-compact.sh above) is the single owner of the
+# max(300, poll+60) derivation - see docs/turnend-guard.md "Guard grace and
+# the poll cadence".
+WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-$(fm_poll_derived_grace "$POLL")}}
 HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${FM_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
 CHECK_INTERVAL=${FM_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps
