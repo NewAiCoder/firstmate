@@ -73,21 +73,6 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
-# fm-watch.sh touches the liveness beacon once per cycle, immediately before
-# its terminal wait, so a healthy watcher's beacon can legitimately age up to
-# FM_POLL seconds between touches (docs/turnend-guard.md "Guard grace and the
-# poll cadence"). A fixed 300s default grace stops correctly bounding
-# staleness once FM_POLL itself reaches or exceeds it: this hook would then
-# call an actively-waiting, perfectly healthy watcher stale at the edge of
-# every full wait. Derive the default from the configured poll instead, with
-# a fixed margin for scheduling slack, and never drop below the historical
-# 300s floor for the common short-poll case.
-POLL_FOR_GRACE=${FM_POLL:-15}
-case "$POLL_FOR_GRACE" in ''|*[!0-9]*) POLL_FOR_GRACE=15 ;; esac
-GUARD_GRACE_POLL_MARGIN=60
-DEFAULT_GUARD_GRACE=$((POLL_FOR_GRACE + GUARD_GRACE_POLL_MARGIN))
-[ "$DEFAULT_GUARD_GRACE" -ge 300 ] || DEFAULT_GUARD_GRACE=300
-GRACE=${FM_GUARD_GRACE:-$DEFAULT_GUARD_GRACE}
 OWNER_LOCK="$STATE/.claude-autoarm.lock"
 FAILURE_NOTICE="$STATE/.claude-autoarm-failure-notified"
 FAILURE_ALARM="$STATE/.claude-autoarm-failure-alarmed"
@@ -107,6 +92,13 @@ esac
 . "$SCRIPT_DIR/fm-session-lock-lib.sh"
 # shellcheck source=bin/fm-hook-host-lib.sh
 . "$SCRIPT_DIR/fm-hook-host-lib.sh"
+
+# fm-watch.sh touches the liveness beacon once per cycle, immediately before
+# its terminal wait, so a healthy watcher's beacon can legitimately age up to
+# FM_POLL seconds between touches (docs/turnend-guard.md "Guard grace and the
+# poll cadence"). fm_poll_derived_grace (bin/fm-wake-lib.sh) is the single
+# owner of that max(300, poll+60) derivation.
+GRACE=${FM_GUARD_GRACE:-$(fm_poll_derived_grace)}
 
 # Consume the Stop payload once. The decisions below are state-based; the
 # payload is read so a slow writer can never wedge on a full pipe, and its host
