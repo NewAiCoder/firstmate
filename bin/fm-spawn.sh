@@ -289,6 +289,11 @@
 # and every refusal; a failed registration stops this spawn rather than launching
 # a worker that would wedge on the dialog. A --secondmate launch never runs it,
 # so a claude secondmate home keeps its own one-time trust decision.
+# Every claude launch also carries the attribution-off policy in its per-launch
+# --settings JSON, so a spawned worker never writes a Co-Authored-By trailer,
+# Claude-Session link, or generated-with line into a commit or PR body;
+# launch_template() below owns the reason it cannot come from the captain's own
+# settings.
 # Publishing the record and moving this home's backlog item to In flight are one
 # step, not two: bin/fm-backlog-transition-lib.sh owns that invariant, and this
 # script performs the transition under the task's own meta lock before it reports
@@ -1415,7 +1420,15 @@ launch_template() {
     # alone disables the feature; keep both so a managed override of one still
     # leaves the other in force. Both are per-launch, scoped to this invocation only,
     # and never touch the captain's global ~/.claude/settings.json.
-    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '\''{"feedbackDrafts":"off"}'\'' __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    # The same inline --settings JSON also carries the attribution policy
+    # ("attribution": {"commit": "", "pr": "", "sessionUrl": false}), which
+    # suppresses Claude Code's Co-Authored-By trailer, Claude-Session link, and
+    # generated-with line in commits and PR bodies. The captain sets that
+    # policy in the `user` settings scope, but a launched worker's settings
+    # sources are not guaranteed to load that scope, so a worker would
+    # otherwise run with attribution back on; carrying it per launch keeps the
+    # policy in force regardless of which settings scopes end up loaded.
+    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '\''{"feedbackDrafts":"off","attribution":{"commit":"","pr":"","sessionUrl":false}}'\'' __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     codex)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'codex __MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
