@@ -386,8 +386,26 @@ SH
     PATH="$fakebin:$BASE_PATH" FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh")
   [ "$out" = rovo ] || fail "rovo's ROVODEV_CLI marker did not outrank an inherited CLAUDECODE, got '$out'"
 
+  # A CLAUDECODE marker with no rovo marker at all must still resolve to
+  # claude. This has to run against a BLIND ancestry (no rovo process visible),
+  # not the shared fake above: that fake always resolves ancestry to rovo at
+  # comm strength, and fm-harness.sh's detect_own deliberately lets a real
+  # comm-strength ancestry match outrank a marker from a different family
+  # (bin/fm-harness.sh, tests/fm-harness-precedence.test.sh
+  # test_markerless_ancestry_outranks_foreign_marker) - reusing the rovo-shaped
+  # ancestry here would test that override, not marker precedence.
+  local blind_fakebin
+  blind_fakebin=$(fm_fakebin "$dir/blind")
+  cat > "$blind_fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *'ppid='*) printf '%s\n' 1 ;;
+  *) printf '%s\n' bash ;;
+esac
+SH
+  chmod +x "$blind_fakebin/ps"
   out=$(env -u CURSOR_AGENT -u CURSOR_INVOKED_AS \
-    CLAUDECODE=1 PATH="$fakebin:$BASE_PATH" FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh")
+    CLAUDECODE=1 PATH="$blind_fakebin:$BASE_PATH" FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh")
   [ "$out" = claude ] || fail "verified env-marker precedence changed, got '$out'"
   pass "fm-harness: rovo's markers outrank an inherited CLAUDECODE, and markerless ancestry still resolves rovo"
 }
