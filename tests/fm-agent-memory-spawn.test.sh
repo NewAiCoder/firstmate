@@ -87,12 +87,29 @@ SH
 
 # fakebin_linux_real_systemd <dir>: same fake tmux, but no uname override, so
 # fm_agent_memory_systemd_user_available consults this host's real uname,
-# systemd-run, and systemctl through the appended real PATH.
+# systemd-run, and systemctl through the appended real PATH. `systemctl` is
+# still shimmed for its ONE mutating call in this path
+# (fm_agent_memory_slice_configure's `set-property` on the real, shared
+# firstmate-agents.slice) so this test never reconfigures a live host's
+# production slice out from under whatever crews it already has running;
+# every other systemctl invocation (the read-only availability probe, etc.)
+# still falls through to the real binary.
 fakebin_linux_real_systemd() {
-  local dir=$1 fakebin
+  local dir=$1 fakebin real_systemctl
   fakebin=$(fm_fakebin "$dir")
   fake_spawn_tmux "$fakebin"
   fm_fake_exit0 "$fakebin" treehouse
+  real_systemctl=$(command -v systemctl) || real_systemctl=
+  if [ -n "$real_systemctl" ]; then
+    cat > "$fakebin/systemctl" <<SH
+#!/usr/bin/env bash
+case "\$*" in
+  "--user set-property "*) exit 0 ;;
+esac
+exec "$real_systemctl" "\$@"
+SH
+    chmod +x "$fakebin/systemctl"
+  fi
   printf '%s\n' "$fakebin"
 }
 
