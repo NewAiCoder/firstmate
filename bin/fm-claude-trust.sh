@@ -39,14 +39,17 @@
 # never the worktree - Claude Code's own git-root canonicalization (`Fr`/`Se`)
 # walks a linked worktree's `.git` file through its `commondir` pointer back to
 # the PRIMARY CHECKOUT, exactly the <project> argument this script already
-# receives for the scope test below. So every flag is registered on BOTH the
-# worktree entry (for trust's ancestor-walk fallback and defense in depth) and
-# the project entry (the only place the external-imports check ever looks, and
-# the trust check's first, canonical-shaped, look). Registering the project
-# entry is a write to the launching user's OWN Claude config store, keyed by a
-# project PATH the scope test below has already verified is real - not a write
-# to the project's tracked content, so hard rule 1 does not apply, same as the
-# existing worktree-entry write.
+# receives for the scope test below. So the trust flag is registered on BOTH
+# the worktree entry (for trust's ancestor-walk fallback and defense in depth)
+# and the project entry (the trust check's first, canonical-shaped, look);
+# the two external-imports flags land on those same two entries only when the
+# project entry already carries standing consent (see the consent-gating
+# block below) - the project entry is the only place the external-imports
+# check ever looks. Registering the project entry is a write to the launching
+# user's OWN Claude config store, keyed by a project PATH the scope test below
+# has already verified is real - not a write to the project's tracked
+# content, so hard rule 1 does not apply, same as the existing worktree-entry
+# write.
 #
 # THAT SAME PROJECT ENTRY IS ALSO THE LAUNCHING HUMAN'S OWN INTERACTIVE
 # CONFIG, though, so this registration must never overwrite a decision the
