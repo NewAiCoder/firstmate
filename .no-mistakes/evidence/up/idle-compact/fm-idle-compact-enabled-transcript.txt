@@ -1,0 +1,41 @@
+Manual CLI verification of `bin/fm-idle-compact.sh enabled` exit-code behavior
+against the corrected prose in this change (bin/fm-dod-lib.sh, docs/configuration.md,
+bin/fm-idle-compact.sh comment): "exit 0 = armed, exit 1 = not armed - absent,
+invalid, or zero `config/idle-compact` (an empty-but-present file is valid and
+uses the 15-minute default)".
+
+=== Case 1: absent config file ===
+$ FM_HOME=/tmp/idle-compact-demo bash bin/fm-idle-compact.sh enabled
+(no output)
+exit=1
+
+=== Case 2: empty-but-present config file ===
+$ : > config/idle-compact
+$ FM_HOME=/tmp/idle-compact-demo bash bin/fm-idle-compact.sh enabled
+15
+exit=0
+
+=== Case 3: valid numeric config (30) ===
+$ echo "30" > config/idle-compact
+$ FM_HOME=/tmp/idle-compact-demo bash bin/fm-idle-compact.sh enabled
+30
+exit=0
+
+=== Case 4: zero config ===
+$ echo "0" > config/idle-compact
+$ FM_HOME=/tmp/idle-compact-demo bash bin/fm-idle-compact.sh enabled
+(no output)
+exit=1
+
+=== Case 5: invalid/non-numeric config ===
+$ echo "banana" > config/idle-compact
+$ FM_HOME=/tmp/idle-compact-demo bash bin/fm-idle-compact.sh enabled
+(no output)
+exit=1
+
+Result: matches the corrected documentation exactly. Before this change, the
+prose incorrectly listed "empty" as a disabling case (would have predicted
+exit=1 for Case 2); the actual, unchanged runtime behavior has always been
+exit=0/15-minute-default for an empty-but-present file, which this fix now
+correctly documents everywhere it appeared (bin/fm-dod-lib.sh worker brief,
+docs/configuration.md, bin/fm-idle-compact.sh comment).
