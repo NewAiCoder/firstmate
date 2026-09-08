@@ -265,13 +265,32 @@ fi
 # same read-modify-write attempt, so a single rename either records all of it
 # or none of it - there is no state where the worktree entry is fresh and the
 # project entry stale, or the other way round.
-FLAG_KEYS='["hasTrustDialogAccepted","hasClaudeMdExternalIncludesApproved","hasClaudeMdExternalIncludesWarningShown"]'
-if ! node - "$STORE" "$WT_REAL" "$PROJ_CANON" "$FLAG_KEYS" <<'NODE'
+#
+# The two external-imports flags are gated separately from the trust flag,
+# because they are a CONSENT grant, not a pre-approval this script is allowed
+# to manufacture. Claude Code only ever writes hasClaudeMdExternalIncludesApproved
+# itself, on an explicit interactive answer; this script's own job is to keep a
+# worker from wedging on a dialog, never to answer that dialog on the human's
+# behalf. So the import flags land on the project entry - the only place the
+# imports check ever reads (see the disassembly note above) - only when that
+# entry ALREADY carries hasClaudeMdExternalIncludesApproved===true, i.e. the
+# human already said yes at some point and this write is a same-value refresh,
+# not new consent from an absent flag. When it is not already true (including
+# plain absent, the common case for a project claude has never asked about),
+# the import flags are left untouched on both entries: writing them to the
+# worktree entry alone would be a pure no-op (the imports check never reads
+# it) that only obscures the real state, so trust still registers normally but
+# the import dialog is left exactly as undecided as it already was - the
+# worker wedges on it, the same honest outcome as an explicit decline, rather
+# than a spawn spending consent the human was never asked for.
+TRUST_FLAG='hasTrustDialogAccepted'
+IMPORT_FLAGS='["hasClaudeMdExternalIncludesApproved","hasClaudeMdExternalIncludesWarningShown"]'
+if ! node - "$STORE" "$WT_REAL" "$PROJ_CANON" "$TRUST_FLAG" "$IMPORT_FLAGS" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const [store, worktree, project, flagKeysJson] = process.argv.slice(2);
-const flagKeys = JSON.parse(flagKeysJson);
+const [store, worktree, project, trustFlag, importFlagsJson] = process.argv.slice(2);
+const importFlags = JSON.parse(importFlagsJson);
 const readStore = () => {
   try {
     return fs.readFileSync(store);
@@ -282,16 +301,16 @@ const readStore = () => {
 };
 const fingerprint = (buf) =>
   buf === null ? "absent" : crypto.createHash("sha256").update(buf).digest("hex");
-const setFlags = (projects, key) => {
+const setFlags = (projects, key, flags) => {
   let entry = projects[key];
   if (entry === undefined || entry === null || typeof entry !== "object" || Array.isArray(entry)) {
     entry = {};
   }
-  for (const flag of flagKeys) entry[flag] = true;
+  for (const flag of flags) entry[flag] = true;
   projects[key] = entry;
 };
-const flagsLanded = (projects, key) =>
-  flagKeys.every((flag) => projects?.[key]?.[flag] === true);
+const flagsLanded = (projects, key, flags) =>
+  flags.every((flag) => projects?.[key]?.[flag] === true);
 // The project entry is the launching user's OWN interactive config, not a
 // throwaway worktree, so a spawn must never silently reverse a decision the
 // human already recorded there. hasClaudeMdExternalIncludesApproved===false
@@ -303,6 +322,11 @@ const flagsLanded = (projects, key) =>
 // dialog rather than the human's consent being spent without being asked.
 const declinedExternalImports = (projects, key) =>
   projects?.[key]?.hasClaudeMdExternalIncludesApproved === false;
+// True only on an explicit prior "Yes, allow" answer - the sole state this
+// script may treat as standing consent to refresh. Absent, or any other
+// value, is NOT consent (see the block comment above this script's node call).
+const approvedExternalImports = (projects, key) =>
+  projects?.[key]?.hasClaudeMdExternalIncludesApproved === true;
 const attempt = () => {
   const original = readStore();
   const before = fingerprint(original);
@@ -326,8 +350,11 @@ const attempt = () => {
       `project entry for ${project} in ${store} already declined external CLAUDE.md imports; refusing to override that consent`,
     );
   }
-  setFlags(projects, worktree);
-  setFlags(projects, project);
+  const carryImportConsent = approvedExternalImports(projects, project);
+  const worktreeFlags = carryImportConsent ? [trustFlag, ...importFlags] : [trustFlag];
+  const projectFlags = carryImportConsent ? [trustFlag, ...importFlags] : [trustFlag];
+  setFlags(projects, worktree, worktreeFlags);
+  setFlags(projects, project, projectFlags);
   // Unpredictable name plus an exclusive create: the config directory may be
   // writable by another local account, and a predictable path could be
   // pre-created there as a symlink that a plain write would follow into some
@@ -349,7 +376,9 @@ const attempt = () => {
     if (!renamed) fs.rmSync(tmp, { force: true });
   }
   const back = JSON.parse(fs.readFileSync(store, "utf8"));
-  const landed = flagsLanded(back.projects, worktree) && flagsLanded(back.projects, project);
+  const landed =
+    flagsLanded(back.projects, worktree, worktreeFlags) &&
+    flagsLanded(back.projects, project, projectFlags);
   return landed ? "recorded" : "dropped";
 };
 try {
