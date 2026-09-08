@@ -2304,6 +2304,17 @@ EOF
                 *)       handle_paused_stale "$w" "$task" "$h" ;;
               esac
             else
+              # The first sighting of this stale hash (surface_nonterminal_stale
+              # above) may have found the endpoint still alive and skipped the
+              # OOM check; a same-hash repeat poll never revisits that decision
+              # otherwise, so a worker OOM-killed AFTER first sighting - with no
+              # pane repaint to change the hash - would retain only this generic
+              # wedge diagnosis forever. Retry here on every repeat poll too;
+              # fm_agent_memory_report_oom_kill is idempotent (its own marker
+              # file), so a harmless no-op once already reported or once the
+              # scope is confirmed alive/collected.
+              agent_alive=$(fm_backend_agent_alive "$(window_backend "$w")" "$w" 2>/dev/null) || agent_alive=unknown
+              [ "$agent_alive" = dead ] && fm_agent_memory_report_oom_kill "$STATE" "$task"
               wedge_timer_check "$w" "$ssf" "non-terminal stale" "$ewf" "$task"
             fi
           fi
