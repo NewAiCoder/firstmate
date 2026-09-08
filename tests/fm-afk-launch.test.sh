@@ -161,6 +161,7 @@ unit_dead_pid_recovery_native() {
   date '+%s' > "$st/state/.afk"
   printf 'none\t-\tnative\n' > "$st/state/.afk-daemon-terminal"
   sleep 600 &
+  # shellcheck disable=SC2031 # The background PID is captured immediately in this shell.
   dead_pid=$!
   lock="$st/state/.supervise-daemon.lock"
   mkdir -p "$lock"
