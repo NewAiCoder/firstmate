@@ -1806,6 +1806,7 @@ command_open() {  # <task-id> [--identity] [--distinguish-absent]
     state=${FM_BACKLOG_ROW_STATE%% *}
     if [ "$state" != "done" ] && [ "$FM_BACKLOG_ROW_HOLD_KIND" = captain ]; then
       if [ "$identity" -eq 1 ]; then
+        require_json_decoder
         show=$(task_show "$id") || {
           printf 'fm-captain-hold: captain call %s is open but its record could not be read\n' "$id" >&2
           exit 2
@@ -1837,7 +1838,7 @@ case "${1:-}" in
   binding) shift; command_binding "$@" ;;
   complete) shift; require_json_decoder; command_complete "$@" ;;
   verify) shift; require_json_decoder; command_verify "$@" ;;
-  open) shift; require_json_decoder; command_open "$@" ;;
+  open) shift; command_open "$@" ;;
   diverged) shift; require_json_decoder; command_diverged "$@" ;;
   reconcile) shift; require_json_decoder; command_reconcile "$@" ;;
   -h|--help) usage ;;
