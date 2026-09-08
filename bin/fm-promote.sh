@@ -160,8 +160,12 @@ fi
 # the --yes ban is the delivery hole this file used to leave open.
 INSTRUCTIONS="$DATA/$ID/ship-instructions.md"
 PROMOTION_ASK_USER_BLOCK=
+IDLE_COMPACT_ENABLED=0
 if [ "$MODE" = no-mistakes ]; then
   PROMOTION_ASK_USER_BLOCK=$(fm_ask_user_escalation_block "$DATA" "$ID")
+  # shellcheck source=bin/fm-idle-compact.sh
+  . "$SCRIPT_DIR/fm-idle-compact.sh"
+  fm_idle_compact_threshold_minutes "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" >/dev/null 2>&1 && IDLE_COMPACT_ENABLED=1
 fi
 mkdir -p "$DATA/$ID"
 [ ! -d "$INSTRUCTIONS" ] || { echo "error: ship instructions path is a directory: $INSTRUCTIONS" >&2; exit 1; }
@@ -187,7 +191,7 @@ $PROMOTION_ASK_USER_BLOCK
 7. Treat the scout-time Firstmate spec and any unmarked legacy \`# Task\` text as investigation context, not captain intent or ship-time instructions.
 EOF
   printf '\n'
-  fm_dod_block "$MODE" "$ID"
+  fm_dod_block "$MODE" "$ID" "$IDLE_COMPACT_ENABLED"
 } > "$TMP" || { echo "error: could not render ship instructions for mode=$MODE" >&2; exit 1; }
 mv "$TMP" "$INSTRUCTIONS"
 TMP=
