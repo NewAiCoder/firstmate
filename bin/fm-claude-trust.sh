@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Pre-register Claude Code's workspace trust AND its external-CLAUDE.md-import
-# approval for the isolated task worktree a ship/scout spawn is about to
-# launch a claude crewmate into, so the worker reaches its brief instead of
-# wedging on either dialog.
+# Pre-register Claude Code's workspace trust for the isolated task worktree a
+# ship/scout spawn is about to launch a claude crewmate into, so the worker
+# reaches its brief instead of wedging on the trust dialog. Also carries
+# forward its external-CLAUDE.md-import approval, but only when the primary
+# checkout already holds standing consent for it - see the consent-gating
+# block below for why that dialog is otherwise left for the worker to wedge
+# on rather than answered on the human's behalf.
 #
 # Usage: fm-claude-trust.sh <worktree> <project>
 #   <worktree>  the isolated task worktree this spawn launches into
