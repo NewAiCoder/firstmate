@@ -2709,6 +2709,59 @@ SH
   pass "open without --identity keeps reporting a captain call without the perl JSON::PP module"
 }
 
+# verify only decodes a task field when the reviewed inventory actually named
+# decision keys (the resolve_entry/verify_hold_durable loop); an inventory
+# completed with --none - the documented normal outcome for a scout task with
+# no captain calls at all - records an empty decision_keys and never reaches
+# that loop. bin/fm-teardown.sh treats any non-zero verify exit as a refused
+# completion gate and blocks the ship, so a host missing only the perl
+# JSON::PP module must still be able to verify the overwhelming majority of
+# scout tasks that never held a captain call.
+test_verify_survives_a_missing_json_decoder() {
+  local home id out
+  home=$(make_home verify-without-json-decoder)
+  id=sample-verify-no-keys
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Review a sample finding with no captain calls" \
+    --kind scout --repo sample --start >/dev/null
+  write_origin_meta "$home" "$id"
+  printf 'done: report complete\n' > "$home/state/$id.status"
+  printf '# Sample finding\n\nNo captain choice is needed here.\n' > "$home/data/$id/report.md"
+  run_captain "$home" complete "$id" --none >/dev/null \
+    || fail "explicit no-call inventory failed while setting up the missing-decoder verify fixture"
+
+  cat > "$home/fakebin/perl" <<'SH'
+#!/usr/bin/env bash
+echo "Can't locate JSON/PP.pm in @INC" >&2
+exit 2
+SH
+  chmod +x "$home/fakebin/perl"
+
+  out=$(run_captain "$home" verify "$id" 2>&1) \
+    || fail "verify with no reviewed decision keys should not need the perl JSON::PP module: $out"
+  pass "verify with no reviewed decision keys keeps working without the perl JSON::PP module"
+}
+
+# reconcile list only reads .request files off disk and never decodes a task
+# field, so it must keep working on a host missing the perl JSON::PP module
+# exactly like the binding commands do.
+test_reconcile_list_survives_a_missing_json_decoder() {
+  local home out
+  home=$(make_home reconcile-list-without-json-decoder)
+  cat > "$home/fakebin/perl" <<'SH'
+#!/usr/bin/env bash
+echo "Can't locate JSON/PP.pm in @INC" >&2
+exit 2
+SH
+  chmod +x "$home/fakebin/perl"
+
+  out=$(run_captain "$home" reconcile list 2>&1) \
+    || fail "reconcile list should not need the perl JSON::PP module: $out"
+  [ "$out" = "reconcile-requests: 0" ] \
+    || fail "reconcile list should report an empty queue, got: $out"
+  pass "reconcile list keeps working without the perl JSON::PP module"
+}
+
 test_uninventoried_report_decision_refuses_completion
 test_completion_gate_attests_and_transfers
 test_answer_records_and_closes
@@ -2748,3 +2801,5 @@ test_captain_hold_mutations_address_the_beads_backend
 test_missing_json_decoder_fails_with_install_hint
 test_binding_commands_survive_a_missing_json_decoder
 test_open_survives_a_missing_json_decoder
+test_verify_survives_a_missing_json_decoder
+test_reconcile_list_survives_a_missing_json_decoder
