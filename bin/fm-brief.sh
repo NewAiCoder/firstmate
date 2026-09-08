@@ -438,11 +438,7 @@ case "$MODE" in
     RULE1='1. Never push to the default branch. Never merge a PR.'
     ;;
 esac
-# shellcheck source=bin/fm-idle-compact.sh
-. "$SCRIPT_DIR/fm-idle-compact.sh"
-IDLE_COMPACT_ENABLED=0
-fm_idle_compact_threshold_minutes "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" >/dev/null 2>&1 && IDLE_COMPACT_ENABLED=1
-DOD=$(fm_dod_block "$MODE" "$ID" "$IDLE_COMPACT_ENABLED") || exit 1
+DOD=$(fm_dod_block "$MODE" "$ID") || exit 1
 
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
