@@ -2385,9 +2385,29 @@ KEEP_PID=$(cat "$HKEEP/state/procevent/keep-src.runner")
 ORPHAN_DESCENDANT=$(cat "$TMP_ROOT/orphan-dead.descendant")
 
 # The reproduction condition itself: the listener is already an orphan in the
-# kernel's sense before anything is asserted about reaping it.
+# kernel's sense before anything is asserted about reaping it. The kernel
+# reparents an orphan to the nearest ancestor that set itself as a child
+# subreaper (PR_SET_CHILD_SUBREAPER), not necessarily to literal pid 1 - a
+# systemd --user manager sitting above this test's own session commonly does
+# exactly that, and that manager is necessarily an ancestor of this test
+# script too (the orphaned listener is one of its descendants). So the real
+# invariant is "no longer a child of the session that spawned it", which
+# holds whenever its new parent is pid 1 or any ancestor of this test script.
+orphan_reparented_to_reaper() {  # <ppid>
+  local target=$1 walk=$$ i=0
+  case "$target" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$target" = 1 ] && return 0
+  while [ "$walk" -gt 1 ] && [ "$i" -lt 64 ]; do
+    [ "$walk" = "$target" ] && return 0
+    walk=$(ps -o ppid= -p "$walk" 2>/dev/null | tr -d '[:space:]')
+    case "$walk" in ''|*[!0-9]*) return 1 ;; esac
+    i=$((i + 1))
+  done
+  return 1
+}
+
 orphan_ppid=$(ps -o ppid= -p "$ORPHAN_PID" 2>/dev/null | tr -d '[:space:]')
-[ "$orphan_ppid" = 1 ] \
+orphan_reparented_to_reaper "$orphan_ppid" \
   || fail "the listener under test was not reparented away from its session (ppid $orphan_ppid)"
 kill -0 -"$ORPHAN_PID" 2>/dev/null \
   || fail "the listener's process group was not running"
