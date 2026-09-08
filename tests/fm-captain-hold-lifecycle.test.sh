@@ -2660,6 +2660,55 @@ SH
   pass "bind, binding, and unbind keep working without the perl JSON::PP module"
 }
 
+# open's default (no --identity) path only asks fm_backlog_row_probe whether
+# the row is a still-open captain hold; it never decodes a task field, though
+# it does still shell out to plain perl (no JSON::PP) to validate the data
+# directory string. Both bin/fm-teardown.sh and bin/fm-bearings-board.sh call
+# it exactly this way - without --identity - so a home whose perl lacks only
+# the JSON::PP module must keep resolving it, or a minimal-install host would
+# refuse to tear down a ship task or would hide a captain call it must show.
+test_open_survives_a_missing_json_decoder() {
+  local home out rc real_perl
+  home=$(make_home open-without-json-decoder)
+  real_perl=$(command -v perl || true)
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+
+## Queued
+- [ ] sample-open-call - Existing task pending captain choice (repo: sample) (kind: ship) (since 2026-01-01)
+
+## Done
+EOF
+  run_captain "$home" hold sample-open-call --reason "captain route choice pending" >/dev/null \
+    || fail "hold failed while setting up the missing-decoder open fixture"
+
+  # Only the JSON::PP module load fails, matching the real minimal-install
+  # host: base perl is present (fm_backlog_data_absolute uses it for
+  # moduleless byte validation), just not the separately packaged JSON::PP.
+  cat > "$home/fakebin/perl" <<SH
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  case "\$arg" in
+    *JSON::PP*)
+      echo "Can't locate JSON/PP.pm in @INC" >&2
+      exit 2
+      ;;
+  esac
+done
+exec "$real_perl" "\$@"
+SH
+  chmod +x "$home/fakebin/perl"
+
+  set +e
+  out=$(run_captain "$home" open sample-open-call 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] \
+    || fail "open without --identity should not need the perl JSON::PP module: $out"
+  [ -z "$out" ] || fail "open without --identity should print nothing, got: $out"
+  pass "open without --identity keeps reporting a captain call without the perl JSON::PP module"
+}
+
 test_uninventoried_report_decision_refuses_completion
 test_completion_gate_attests_and_transfers
 test_answer_records_and_closes
@@ -2698,3 +2747,4 @@ test_verify_resolves_a_pre_collapse_key_through_its_derived_marker
 test_captain_hold_mutations_address_the_beads_backend
 test_missing_json_decoder_fails_with_install_hint
 test_binding_commands_survive_a_missing_json_decoder
+test_open_survives_a_missing_json_decoder

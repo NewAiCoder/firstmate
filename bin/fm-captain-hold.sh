@@ -1429,6 +1429,7 @@ reconcile_close() {
   done
   validate_slug task-id "$id"
   [ -n "$evidence_file" ] || fail "--evidence-file is required; a moot call closes on evidence, never on assertion"
+  require_json_decoder
   load_decision "$evidence_file"
   acquire_task_control_lock "$id"
   reconcile_request_read "$id" \
@@ -1500,6 +1501,7 @@ reconcile_note() {
   [ -n "$note" ] || fail "note file must not be empty"
   [ "$(printf '%s' "$note" | LC_ALL=C wc -c | tr -d ' ')" -le 8192 ] \
     || fail "note file exceeds 8192 bytes"
+  require_json_decoder
   acquire_task_control_lock "$id"
   reconcile_request_read "$id" \
     || fail "task $id has no pending board-created reconcile request"
@@ -1633,6 +1635,7 @@ command_verify() {
   [ "$reviewed" = 1 ] || fail "origin $origin has no completed captain-call inventory"
   keys=$(meta_value "$meta" decision_keys)
   if [ -n "$keys" ]; then
+    require_json_decoder
     while IFS= read -r entry; do
       [ -n "$entry" ] || continue
       if ! resolved=$(resolve_entry "$origin" "$entry"); then
@@ -1837,10 +1840,10 @@ case "${1:-}" in
   unbind) shift; command_unbind "$@" ;;
   binding) shift; command_binding "$@" ;;
   complete) shift; require_json_decoder; command_complete "$@" ;;
-  verify) shift; require_json_decoder; command_verify "$@" ;;
+  verify) shift; command_verify "$@" ;;
   open) shift; command_open "$@" ;;
   diverged) shift; require_json_decoder; command_diverged "$@" ;;
-  reconcile) shift; require_json_decoder; command_reconcile "$@" ;;
+  reconcile) shift; command_reconcile "$@" ;;
   -h|--help) usage ;;
   *) usage >&2; exit 2 ;;
 esac
