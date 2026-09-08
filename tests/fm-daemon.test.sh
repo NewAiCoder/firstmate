@@ -2329,6 +2329,7 @@ test_wedge_alarm_shutdown_stops_active_notifier_group() {
   (
     set -m
     sh -c 'sleep 30 & printf "%s" "$!" > "$1"; wait' sh "$child_file" &
+    # shellcheck disable=SC2031 # The background PID is captured immediately in this shell.
     pid=$!
     while [ ! -s "$child_file" ]; do sleep 0.05; done
     child=$(cat "$child_file")

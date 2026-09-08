@@ -106,6 +106,10 @@ export class ModelRuntime {
   constructor() {
     this.models = (globalThis.__fmBranchStaticModels?.() ?? []).map((model) => ({ ...model }));
     this.authenticated = new Set(this.models.filter((model) => model.storedAuth !== false).map((model) => model.provider));
+    this.registeredProviderConfigs = new Map();
+    // Like the real runtime, a registered provider's credentials are only
+    // known once refresh() has run for it; registration alone is provisional.
+    this.pendingAuth = new Set();
   }
   static async create() {
     const queuedError = globalThis.__fmModelRuntimeErrors?.shift();
@@ -114,6 +118,18 @@ export class ModelRuntime {
     const runtime = new ModelRuntime();
     (globalThis.__fmModelRuntimes ??= []).push(runtime);
     return runtime;
+  }
+  registerProvider(providerId, config) {
+    this.registeredProviderConfigs.set(providerId, config);
+    for (const model of config.models ?? []) {
+      this.models.push({ ...model, provider: providerId });
+    }
+    if (config.oauth || config.apiKey) this.pendingAuth.add(providerId);
+  }
+  async refresh(options) {
+    for (const providerId of options?.providers ?? this.pendingAuth) {
+      if (this.pendingAuth.delete(providerId)) this.authenticated.add(providerId);
+    }
   }
   getModel(provider, id) {
     return this.models.find((model) => model.provider === provider && model.id === id);
@@ -446,6 +462,8 @@ const modelRegistry = {
   getAvailable: () => registryModels.filter((model) => model.mainAvailable !== false).slice(),
   find: (provider, id) => registryModels.find((model) => model.provider === provider && model.id === id),
   hasConfiguredAuth: (model) => model.mainAvailable !== false,
+  getRegisteredProviderConfig: (providerId) => globalThis.__fmExtensionProviderConfigs?.get(providerId),
+  getRegisteredProviderIds: () => [...(globalThis.__fmExtensionProviderConfigs?.keys() ?? [])],
 };
 function makeCtx(extra) {
   return {
@@ -1796,6 +1814,71 @@ EOF
   out=$(cat "$TMP_ROOT/node-output")
   expect_code 0 "$status" "pre-drain eligibility re-check must exclude only the new main-owned row: $out"
   pass "pre-drain eligibility re-check excludes a newly main-owned row without deferring eligible work"
+}
+
+# A needs-decision signal wakes main independently, but it must not veto an
+# already accepted routine delivery at the branch's pre-drain recheck. The
+# grant serializes the actors: branch owns only the routine row, while the
+# decision row remains main-owned. If the prompted branch then fails, rejecting
+# the settlement releases the grant so watcher fallback can replay both rows.
+test_branch_predrain_needs_decision_keeps_routine_row_branch_eligible() {
+  local repo home out status
+  repo="$TMP_ROOT/predrain-needs-decision-root"
+  home="$TMP_ROOT/predrain-needs-decision-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { bus, fire, home, makeOffer, realRoot }; })()`);
+const { bus, fire, home, makeOffer, realRoot } = globalThis.__t;
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+
+fire("session_start", {});
+writeFileSync(
+  `${home}/state/.wake-queue`,
+  "1\t1\tsignal\tbranch-driver.status\tsignal: routine progress\n" +
+    "2\t2\tsignal\tdecision-task.status\tneeds-decision: decision-task.status\n",
+);
+let releasePrompt;
+globalThis.__fmPromptGate = new Promise((resolve) => { releasePrompt = resolve; });
+const offer = makeOffer("signal: branch-driver.status");
+bus.emit("fm-branch-supervision:dispatch", offer);
+if (!offer.accepted) throw new Error("branch refused the routine offer before its mixed-queue recheck");
+for (let i = 0; i < 250 && !globalThis.__fmPromptStarted; i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+if (!globalThis.__fmPromptStarted) {
+  throw new Error("a co-present needs-decision row vetoed the accepted routine branch prompt");
+}
+const snapshot = readFileSync(`${home}/state/.branch-eligible-rows`, "utf8").trim().split("\n");
+if (!snapshot.includes("1") || snapshot.includes("2")) {
+  throw new Error(`mixed queue granted the wrong rows to branch: ${snapshot}`);
+}
+releasePrompt();
+const failure = await offer.settlement.then(() => null, (error) => error);
+if (!(failure instanceof Error) || !failure.message.includes("produced no durable outcome")) {
+  throw new Error(`accepted wake settled without delivery instead of rejecting to fallback: ${String(failure)}`);
+}
+if (existsSync(`${home}/state/.branch-eligible-rows`)) {
+  throw new Error("failed branch prompt retained its routine-row grant");
+}
+const drain = spawnSync("bash", [`${realRoot}/bin/fm-wake-drain.sh`], {
+  encoding: "utf8",
+  env: { ...process.env, FM_HOME: home, FM_STATE_OVERRIDE: `${home}/state`, FM_ROOT_OVERRIDE: realRoot },
+});
+if (drain.status !== 0) throw new Error(`main fallback drain failed: ${drain.stderr}`);
+if (!drain.stdout.includes("\t1\tsignal\tbranch-driver.status\t") ||
+    !drain.stdout.includes("\t2\tsignal\tdecision-task.status\t")) {
+  throw new Error(`fallback did not receive the released mixed queue: ${drain.stdout}`);
+}
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "a mixed needs-decision recheck must keep routine branch delivery live: $out"
+  pass "a co-present needs-decision row neither vetoes nor falsely settles routine branch delivery"
 }
 
 test_settled_branch_prompt_releases_unacknowledged_grant() {
@@ -3649,7 +3732,17 @@ test_branch_dispatch_classifies_main_only_rows_and_writes_the_eligible_snapshot(
   LIB="$repo/.pi/extensions/lib/fm-branch-dispatch.ts" FM_HOME="$home" GRANT="$ROOT/bin/fm-wake-grant.sh" \
     node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
 import { pathToFileURL } from "node:url";
-import { readFileSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import fs, { readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+
+const originalReadFileSync = fs.readFileSync;
+let countedStatusPath = "";
+let countedStatusReads = 0;
+fs.readFileSync = function(path, ...args) {
+  if (String(path) === countedStatusPath) countedStatusReads += 1;
+  return originalReadFileSync.call(this, path, ...args);
+};
+syncBuiltinESMExports();
 
 const { activateEligibleRowsOwner, scopeForUnreadWake, writeEligibleRowsSnapshot, releaseEligibleRowsSnapshot, BRANCH_ELIGIBLE_ROWS_FILE } =
   await import(pathToFileURL(process.env.LIB).href);
@@ -3672,6 +3765,157 @@ for (const row of mainOnlyRows) {
   }
   if (scope.corrupted) throw new Error(`an ordinary main-only row must not read as corrupted: ${row}`);
 }
+
+// A needs-decision signal row is a main-only class too, marked by payload
+// rather than kind (docs/pi-supervision-branch.md "Autonomy"): it is excluded
+// from eligibleSeqs and named in needsDecisionKeys. A later stale row under the
+// task's window alias remains individually claimable, while task-identity
+// precedence keeps its complete wake on main until the decision row is read.
+writeFileSync(
+  `${state}/.wake-queue`,
+  [
+    "1\t1\tsignal\ttask-a.status\tneeds-decision: task-a.status",
+    "1\t2\tstale\tfm-window\tstale: later routine reminder",
+  ].join("\n"),
+);
+const needsDecisionMixed = scopeForUnreadWake(state, false);
+if (!needsDecisionMixed.eligible) {
+  throw new Error(`an unread needs-decision row must not erase a later stale row: ${JSON.stringify(needsDecisionMixed)}`);
+}
+if (needsDecisionMixed.eligibleSeqs.join(",") !== "2") {
+  throw new Error(`a needs-decision row must be excluded from eligibleSeqs: ${JSON.stringify(needsDecisionMixed)}`);
+}
+if (needsDecisionMixed.needsDecisionKeys.join(",") !== "task-a.status") {
+  throw new Error(`needsDecisionKeys must name the excluded row: ${JSON.stringify(needsDecisionMixed)}`);
+}
+if (needsDecisionMixed.taskByWakeKey["task-a.status"] !== "task-a" ||
+  needsDecisionMixed.taskByWakeKey["fm-window"] !== "task-a") {
+  throw new Error(`status and stale aliases did not resolve to one task: ${JSON.stringify(needsDecisionMixed)}`);
+}
+if (needsDecisionMixed.corrupted) {
+  throw new Error(`a needs-decision row must not read as corrupted: ${JSON.stringify(needsDecisionMixed)}`);
+}
+
+// A queue holding only a needs-decision row is ordinary main-only absence,
+// exactly like a queue holding only a check row.
+writeFileSync(`${state}/.wake-queue`, "1\t1\tsignal\ttask-a.status\tneeds-decision: task-a.status");
+const needsDecisionOnly = scopeForUnreadWake(state, false);
+if (needsDecisionOnly.eligible || needsDecisionOnly.eligibleSeqs.length !== 0 || needsDecisionOnly.corrupted) {
+  throw new Error(`a needs-decision-only queue must be ordinary main-only absence: ${JSON.stringify(needsDecisionOnly)}`);
+}
+
+// A captain-held task's bounded stale recheck is itself a decision wake. It is
+// excluded while an unrelated routine row remains independently branch-owned.
+writeFileSync(`${state}/task-a.status`, "captain-held [key=route]: awaiting the captain\n \t \n");
+writeFileSync(
+  `${state}/.wake-queue`,
+  [
+    "1\t1\tstale\tfm-window\tstale: fm-window (awaiting the captain)",
+    "1\t2\tsignal\ttask-a.status\tsignal: routine follow-up",
+  ].join("\n"),
+);
+const captainHeldMixed = scopeForUnreadWake(state, false);
+if (!captainHeldMixed.eligible || captainHeldMixed.eligibleSeqs.join(",") !== "2") {
+  throw new Error(`a captain-held stale row was offered to the branch: ${JSON.stringify(captainHeldMixed)}`);
+}
+if (captainHeldMixed.needsDecisionKeys.join(",") !== "fm-window") {
+  throw new Error(`the captain-held stale key was not marked main-owned: ${JSON.stringify(captainHeldMixed)}`);
+}
+
+writeFileSync(`${state}/task-a.status`, "captain-held [key=route]: awaiting a second captain reminder\n \n");
+writeFileSync(
+  `${state}/.wake-queue`,
+  [
+    "1\t1\tstale\tfm-window\tstale: fm-window (first reminder)",
+    "1\t2\tstale\tfm-window\tstale: fm-window (second reminder)",
+    "1\t3\tsignal\ttask-a.status\tsignal: routine follow-up",
+  ].join("\n"),
+);
+countedStatusPath = `${state}/task-a.status`;
+countedStatusReads = 0;
+const repeatedCaptainHeld = scopeForUnreadWake(state, false);
+if (countedStatusReads !== 1) {
+  throw new Error(`one status was read ${countedStatusReads} times for repeated stale rows`);
+}
+if (!repeatedCaptainHeld.eligible || repeatedCaptainHeld.eligibleSeqs.join(",") !== "3" ||
+  repeatedCaptainHeld.needsDecisionKeys.join(",") !== "fm-window,fm-window") {
+  throw new Error(`repeated stale reminders changed classification: ${JSON.stringify(repeatedCaptainHeld)}`);
+}
+const repeatedCaptainHeldNextScan = scopeForUnreadWake(state, false);
+if (countedStatusReads !== 1 || repeatedCaptainHeldNextScan.needsDecisionKeys.join(",") !== "fm-window,fm-window") {
+  throw new Error(`an unchanged status was not reused across scans: reads=${countedStatusReads} scope=${JSON.stringify(repeatedCaptainHeldNextScan)}`);
+}
+writeFileSync(`${state}/task-a.status`, "captain-held [key=route]: awaiting the captain\nworking: resumed after answer\n");
+const changedCaptainHeld = scopeForUnreadWake(state, false);
+if (countedStatusReads !== 2 || changedCaptainHeld.eligibleSeqs.join(",") !== "1,2,3" ||
+  changedCaptainHeld.needsDecisionKeys.length !== 0) {
+  throw new Error(`a changed status did not invalidate its cached decision: reads=${countedStatusReads} scope=${JSON.stringify(changedCaptainHeld)}`);
+}
+countedStatusPath = "";
+writeFileSync(
+  `${state}/.wake-queue`,
+  [
+    "1\t1\tstale\tfm-window\tstale: fm-window (awaiting the captain)",
+    "1\t2\tsignal\ttask-a.status\tsignal: routine follow-up",
+  ].join("\n"),
+);
+
+// A later unrelated status does not mask a still-open durable decision. The
+// stale row remains main-owned while the routine signal stays branch-owned.
+writeFileSync(
+  `${state}/task-a.status`,
+  "needs-decision [key=cleanup]: choose destructive cleanup\nworking: routine follow-up\n",
+);
+const openDecisionMixed = scopeForUnreadWake(state, false);
+if (!openDecisionMixed.eligible || openDecisionMixed.eligibleSeqs.join(",") !== "2") {
+  throw new Error(`an open-decision stale row was offered to the branch: ${JSON.stringify(openDecisionMixed)}`);
+}
+if (openDecisionMixed.needsDecisionKeys.join(",") !== "fm-window") {
+  throw new Error(`the open-decision stale key was not marked main-owned: ${JSON.stringify(openDecisionMixed)}`);
+}
+
+process.env.FM_CLASSIFY_RESOLVE_VERB = "answered";
+writeFileSync(
+  `${state}/task-a.status`,
+  "needs-decision [key=cleanup]: choose destructive cleanup\nanswered [key=cleanup]: remove generated files\n",
+);
+const customResolved = scopeForUnreadWake(state, false);
+if (!customResolved.eligible || customResolved.eligibleSeqs.slice().sort().join(",") !== "1,2" ||
+  customResolved.needsDecisionKeys.length !== 0) {
+  throw new Error(`a custom resolution verb left the stale decision open: ${JSON.stringify(customResolved)}`);
+}
+
+process.env.FM_CLASSIFY_CAPTAIN_HELD_VERB = "awaiting-captain";
+writeFileSync(`${state}/task-a.status`, "awaiting-captain [key=cleanup]: awaiting the captain\n");
+const customHeld = scopeForUnreadWake(state, false);
+if (!customHeld.eligible || customHeld.eligibleSeqs.join(",") !== "2" ||
+  customHeld.needsDecisionKeys.join(",") !== "fm-window") {
+  throw new Error(`a custom captain-held verb was offered to the branch: ${JSON.stringify(customHeld)}`);
+}
+delete process.env.FM_CLASSIFY_RESOLVE_VERB;
+delete process.env.FM_CLASSIFY_CAPTAIN_HELD_VERB;
+
+process.env.FM_CLASSIFY_RESERVED_KEY_PREFIXES = "secret-";
+writeFileSync(
+  `${state}/task-a.status`,
+  "needs-decision [key=pending-reply-x]: choose destructive cleanup\nworking: routine follow-up\n",
+);
+const customReservedPrefixes = scopeForUnreadWake(state, false);
+if (!customReservedPrefixes.eligible || customReservedPrefixes.eligibleSeqs.join(",") !== "2" ||
+  customReservedPrefixes.needsDecisionKeys.join(",") !== "fm-window") {
+  throw new Error(`configured reserved prefixes lost an open stale decision: ${JSON.stringify(customReservedPrefixes)}`);
+}
+delete process.env.FM_CLASSIFY_RESERVED_KEY_PREFIXES;
+
+writeFileSync(`${state}/symlink-target.status`, "needs-decision: external choice\n");
+unlinkSync(`${state}/task-a.status`);
+symlinkSync(`${state}/symlink-target.status`, `${state}/task-a.status`);
+const symlinkedStatus = scopeForUnreadWake(state, false);
+if (!symlinkedStatus.corrupted || symlinkedStatus.eligible || symlinkedStatus.needsDecisionKeys.length !== 0) {
+  throw new Error(`a symlinked status file influenced stale routing: ${JSON.stringify(symlinkedStatus)}`);
+}
+unlinkSync(`${state}/task-a.status`);
+writeFileSync(`${state}/task-a.status`, "working: routine work\n");
 
 writeFileSync(
   `${state}/.wake-queue`,
@@ -4509,6 +4753,98 @@ EOF
   pass "a failed cursor write re-delivers a routine note exactly once more while a captain outcome stays deduplicated"
 }
 
+test_extension_registered_provider_resolves_in_the_branch() {
+  local repo home out status
+  repo="$TMP_ROOT/extprov-root"
+  home="$TMP_ROOT/extprov-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { fire, dispatch, settle, makeCtx, registryModels, uiSelections, uiPrompts, notices, commands, home }; })()`);
+const { fire, dispatch, settle, makeCtx, registryModels, uiSelections, uiPrompts, notices, commands, home } = globalThis.__t;
+import { readFileSync, writeFileSync } from "node:fs";
+
+// An extension-registered provider exists only in main's registry, never in
+// the isolated branch runtime's static catalog. Registering its config on
+// main's registry is what makes it resolvable for the branch.
+registryModels.push(
+  { provider: "anthropic", id: "main-model" },
+  // Available in main's registry but absent from the branch runtime's static
+  // catalog, exactly like a provider an extension registered at runtime.
+  { provider: "devin", id: "swe-1-7", branchAvailable: false },
+);
+globalThis.__fmExtensionProviderConfigs = new Map([
+  [
+    "devin",
+    {
+      name: "Devin (Cognition)",
+      api: "devin-cloud",
+      baseUrl: "https://server.codeium.com",
+      models: [{ id: "swe-1-7", name: "SWE 1.7", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200000, maxTokens: 8192 }],
+      oauth: { name: "Devin (Cognition / Windsurf)", login: async () => ({}), refreshToken: async (c) => c, getApiKey: (c) => c.access },
+      streamSimple: () => {},
+    },
+  ],
+]);
+
+await fire("session_start", {}, makeCtx());
+
+// The picker must offer the extension-registered model: it is available in
+// main's registry and resolvable in the branch runtime once its registration
+// is copied across.
+const command = commands.get("supervision-model");
+if (!command) throw new Error("the supervision-model command was not registered");
+uiSelections.push("devin/swe-1-7");
+await command.handler("", makeCtx());
+const offered = uiPrompts[0];
+if (!offered.options.includes("devin/swe-1-7")) {
+  throw new Error(`the picker must offer an extension-registered provider the branch can run: ${JSON.stringify(offered.options)}`);
+}
+if (readFileSync(`${home}/config/supervision-branch-model`, "utf8") !== "devin/swe-1-7\n") {
+  throw new Error("the extension-registered pick was not persisted");
+}
+dispatch("signal: extension provider pin");
+await settle(() => (globalThis.__fmSessions ?? []).length === 1, "pinned extension-provider branch build");
+const pinned = globalThis.__fmSessions[0].options.model;
+if (!pinned || pinned.provider !== "devin" || pinned.id !== "swe-1-7") {
+  throw new Error(`the extension-registered pin did not bind the branch: ${JSON.stringify(pinned)}`);
+}
+// Copying the provider registration must not loosen the branch's isolation:
+// the devin-pinned session still loads no extensions, skills, or context files.
+const pinnedLoader = globalThis.__fmLoaders.at(-1);
+for (const key of ["noExtensions", "noSkills", "noContextFiles"]) {
+  if (pinnedLoader.options[key] !== true) throw new Error(`devin-pinned branch loader must keep ${key}`);
+}
+
+// Without the registration, the same pin is unavailable and the branch
+// refuses to build rather than silently downgrading.
+globalThis.__fmExtensionProviderConfigs = new Map();
+await fire("session_shutdown", {});
+await fire("session_start", {}, makeCtx());
+const unregisteredOffer = dispatch("signal: unregistered provider pin");
+if (!unregisteredOffer.accepted) throw new Error("unregistered-pin wake was not initially accepted");
+const unregisteredFailure = await unregisteredOffer.settlement.then(
+  () => null,
+  (error) => error,
+);
+if (
+  !(unregisteredFailure instanceof Error) ||
+  !unregisteredFailure.message.includes("devin/swe-1-7") ||
+  !unregisteredFailure.message.includes("supervision model pin")
+) {
+  throw new Error(`the unregistered pin did not reject with its own name: ${String(unregisteredFailure)}`);
+}
+if ((globalThis.__fmSessions ?? []).length !== 1) throw new Error("an unregistered pin must not build a second branch session");
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "an extension-registered provider must resolve in the isolated branch runtime: $out"
+  pass "an extension-registered provider resolves in the isolated branch runtime"
+}
+
 test_outcomes_tool_uses_stock_execution_and_export_consumers
 test_real_pi_picker_primitives_stay_bounded_and_searchable
 test_branch_dispatch_two_stage_filter_and_prefix_contract
@@ -4521,6 +4857,7 @@ test_branch_default_on_heartbeat_afk_and_fallback
 test_branch_predrain_recheck_keeps_a_heartbeat_a_co_present_check_arrives_under
 test_branch_report_refuses_a_task_the_wake_did_not_name
 test_branch_predrain_recheck_excludes_new_main_owned_row_without_deferring_eligible_work
+test_branch_predrain_needs_decision_keeps_routine_row_branch_eligible
 test_settled_branch_prompt_releases_unacknowledged_grant
 test_post_construction_provider_error_falls_back_latches_and_recovers_on_cooldown
 test_selection_change_does_not_corrupt_inflight_provider_state
@@ -4536,6 +4873,7 @@ test_supervision_model_picker_is_bounded_searchable_and_branch_only
 test_branch_model_picker_keeps_follow_main_first_under_ranking
 test_branch_effort_pin_applies_and_absent_pin_follows_main
 test_unpinned_branch_follows_main_effort_changes_live
+test_extension_registered_provider_resolves_in_the_branch
 test_supervision_model_command_picks_effort_after_the_model
 test_unusable_model_pin_falls_back_to_main
 test_replacement_activation_cleans_leases_and_retries_failure
