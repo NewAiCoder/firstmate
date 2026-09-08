@@ -22,7 +22,15 @@ DB="${TELEMETRY_DB:-${CLAUDE_HOME:-$HOME/.claude}/telemetry/usage.sqlite}"
 [ -f "$DB" ] || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 
-read -r LINES FILES <<< "$(fm_diff_size "$WORKTREE" "$BASE")"
+# fm_diff_size fails open with "0 0" for a caller (the worker's own pre-run
+# check) that must never block on a bad measurement. Telemetry has the
+# opposite requirement: a "0 0" it cannot tell apart from a real zero-line
+# lane would corrupt the size/rounds dataset, so an unresolved worktree or
+# base ref is skipped here rather than measured and stored.
+[ -d "$WORKTREE" ] || exit 0
+RESOLVED_BASE=$(git -C "$WORKTREE" rev-parse --verify --quiet "$BASE" 2>/dev/null) || exit 0
+
+read -r LINES FILES <<< "$(fm_diff_size "$WORKTREE" "$RESOLVED_BASE")"
 HOST=$(uname -n | cut -d. -f1 | tr '[:upper:]' '[:lower:]')
 PROJECT=$(basename "$(git -C "$WORKTREE" rev-parse --show-toplevel 2>/dev/null || echo "$WORKTREE")")
 STAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
