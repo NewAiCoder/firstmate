@@ -155,13 +155,17 @@ Observed identities, and the resulting verdict:
 | grok | 0.2.118 | `grok-0.2.118-ma` | `grok` | alive |
 | kimi | 0.31.1 | `kimi` | `kimi` | alive |
 
-Claude Code is the harness whose title no longer attributes it at all; every other adapter is currently attributed by both sources.
+In that 2026-08-03 seven-adapter run, Claude Code was the only harness whose title did not attribute it; every other adapter was attributed by both sources.
 Codex reported `codex-aarch64-a` at 0.145.0 and `codex` at 0.146.0, and Kimi Code reported `kimi-code` as its foreground `comm` at 0.29.1 and `kimi` at 0.31.1, so these identities move between ordinary patch releases in both directions.
 That is the evidence for treating any single process name as a surface under vendor control rather than a stable contract.
 
 The crewmate-only Muse Code 0.1.0-R708.1 adapter was verified separately on 2026-08-05 against tmux on macOS arm64.
 Its installed `muse-bin-0.1.0-R708.1` foreground identity classified `alive`, while `musescore`, `amuse`, `muse-binary`, and `muse-bind` remained ambiguous in the portable regression.
 [`muse.md`](muse.md#process-identity) owns the artifact identity and launcher evidence for that verification.
+
+The crewmate/scout-only Rovo CLI 202609.1.2 adapter added `*rovo*` to the same glob family as `*grok*`/`*kimi*` in `fm_backend_tmux_classify_process_name`, and was relaunched live under tmux 3.6a in an isolated private socket.
+`#{pane_current_command}` reported the truncated on-disk binary name `atlassian_cli_r` - macOS's 15-char `comm` truncation cuts `atlassian_cli_rovodev` off just before the `rovo` substring begins, the same truncation-volatility class codex/kimi's own patch-release name drift shows above - while the foreground ps-based `comm` correctly reported `rovo`, so `fm_backend_tmux_agent_state` returned `alive` through that primary source; the two-independent-name-sources design is exactly why the truncated title does not break the verdict.
+[`rovo.md`](rovo.md#backend-liveness-tmux-verified-live-herdr-placement-verified-live-with-a-herdr-side-agent-detection-gap) owns the fuller record, including the busy/interrupt/exit facts captured in that same live tmux session and the herdr agent-detection gap found when herdr placement was verified live in an isolated lab session.
 
 Bounded observed output:
 
@@ -180,14 +184,36 @@ alive
 On macOS the pane command reflected the rewritable title while the full install path could survive in `ps -o comm=`; in the Linux portable regression those roles reversed for the version-named native executable, with the identifying path retained in argv[0].
 The classifier therefore accepts a harness basename first, then an exact harness path component in the full executable path, then the same component in argv[0], without depending on which field carries it on a given platform.
 
-The portable regression is CI-enforced, while the real-harness drift guard is opt-in under the policy in `.agents/skills/firstmate-coding-guidelines/SKILL.md`.
+The portable regression is CI-enforced.
+The real-harness drift guard spends no model tokens, so under the policy in `.agents/skills/firstmate-coding-guidelines/SKILL.md` it runs by default wherever tmux is installed and reports a capability skip elsewhere; `FM_HARNESS_LIVENESS_DRIFT=1` additionally turns an absent tool into a failure.
 Run the live guard after any harness upgrade and before trusting or refreshing the table above:
 
 ```sh
 FM_HARNESS_LIVENESS_DRIFT=1 bin/fm-test-run.sh tests/fm-harness-liveness-drift-live-e2e.test.sh
 ```
 
-Bounded output from the run that produced the table:
+### 2026-09-06 default-on drift refresh, and the Cursor editor CLI collision
+
+Running the guard with no variable set on macOS 26.5.2 arm64 checked 8 installed harnesses and classified every one `alive`:
+
+```text
+# claude 2.1.263 (Claude Code): title='2.1.263' foreground=[/Users/kunchen/.local/bin/claude <defunct> <defunct> ]
+# codex codex-cli 0.147.0: title='codex' foreground=[/opt/homebrew/bin/codex ]
+# opencode 1.18.29: title='opencode' foreground=[/opt/homebrew/bin/opencode ]
+# pi 0.84.4: title='pi-launcher' foreground=[/opt/homebrew/bin/pi-signed .../pi ]
+# pi-signed 0.84.4: title='pi-launcher' foreground=[/opt/homebrew/bin/pi-signed .../pi ]
+# grok grok 1.0.13 (5e9a58528b76) [stable]: title='grok-1.0.13-mac' foreground=[/Users/kunchen/.local/bin/grok ]
+# cursor 2026.09.02-c22c1a3: title='node' foreground=[/Users/kunchen/.local/bin/cursor-agent ]
+# muse Muse Code 1.0.3 (1.0.3-R2198.1): title='muse-bin-1.0.3-' foreground=[/Users/kunchen/.local/bin/muse-bin-1.0.3-R2198.1 ]
+# checked 8 installed harness(es)
+```
+
+The first default-on run failed on Cursor with `LIVENESS DRIFT: cursor unknown is running but classifies 'missing'`, observed title `zsh`.
+The classifier was not at fault: the guard resolved the harness through a generic `command -v cursor`, which on a machine that also has the Cursor editor finds `~/.local/bin/cursor` - the editor launcher, not the agent.
+That binary exits immediately, leaving a bare shell in the pane.
+The guard now asks `fm_cursor_resolve_binary` first for `cursor`, which is the same verified owner `bin/fm-spawn.sh` uses, so the probe launches `cursor-agent` and the editor CLI can no longer masquerade as the harness.
+
+Bounded output from the 2026-08-03 run that produced the first table above:
 
 ```text
 ok - harness liveness: claude 2.1.220 (Claude Code) classifies alive
@@ -1580,3 +1606,51 @@ It names the installed version and the floor rather than degrading quietly, and 
 The same guard against the pre-change extension in the same lab measured a 676.9 ms worst keystroke echo while delivering two outcomes and a 295.3 ms worst echo with nothing to deliver, against a 49.2 ms extension-free floor, and failed as designed.
 Measured through the same real `fm_branch_report` tool and real `bin/` scripts with a 1 ms interval timer, the largest single block of the JavaScript thread fell from 273 ms to 2.0 ms for a routine outcome, from 286 ms to 2.0 ms for a captain outcome, and from 134 ms to 1.9 ms for main's acknowledgement, against a 1.3-2.2 ms idle-loop floor.
 Those absolute figures are specific to this host and Pi version; the guards assert the relationship (delivery must stay in the class of the same machine's own floor) rather than a remembered millisecond number.
+
+## Oh My Pi (omp)
+
+omp runs crewmate, scout, secondmate, and primary work; [`supervision.md`](supervision.md#omp-oh-my-pi-native-delivery-2026-09-05) owns the primary evidence.
+The evidence below was produced on 2026-09-05 against omp 18.1.11 (`~/.local/bin/omp`, a Bun-compiled single binary) on macOS 26 arm64 through the Herdr backend with the `openai-codex/gpt-6-astra` model, building on the 2026-09-02 adapter investigation against 18.1.2.
+
+### Process identity and markers
+
+`ps -o comm=` reports the bare name `omp` for the agent process, from both its `!` bash path and the model's bash tool, so identity is the anchored name; `ompd` and `comp` never match.
+omp publishes no harness marker: `PI_CODING_AGENT` is absent from the binary, and the default profile sets neither `PI_CODING_AGENT_DIR` nor `OMP_PROFILE` in the process environment.
+`FM_OMP_HARNESS=omp` is Firstmate's own launch marker and wins over an inherited `CLAUDECODE` only under a real omp ancestor; `tests/fm-omp-harness.test.sh` pins both directions with real processes.
+
+### Composer
+
+Under the captain's `unicode` symbol preset the idle screen through Herdr was a bare `❯` (U+276F) row followed directly by the status row:
+
+```text
+❯
+ π  · ◔ GPT-6-Astra · 🌳 …-workspace · ⑂ detached · ◫ 15.4%/272K ⟲ · (sub)
+```
+
+Before the status-row rule the shared classifier folded that row into the bare composer's wrap region and read the idle pane `pending`, so `bin/fm-send.sh` skipped its doorbell on the first live omp worker.
+After the rule, the same live Herdr capture read `empty`, a steer's doorbell landed, and the worker opened a turn on it.
+`tests/fm-composer-lib.test.sh` pins the unicode idle row, the nerd-preset idle row, the busy spinner row, and typed text over the same fixture in both locales.
+
+### Busy state and lifecycle
+
+| Fact | Observed |
+| --- | --- |
+| Semantic source | `omp-ext`: `busy source=omp-ext event=agent-start` on the brief, `idle source=omp-ext event=agent-end` at its natural end, `busy` again on a steer, `idle` after a control-plane interrupt |
+| Rendered busy row | `⎋ Working…` (U+2026) above the composer and a braille spinner plus elapsed cell (`⠧ 36s`) in the status row; the omp busy regex accepts only those two TUI signals, not the `Working...` that headless `-p` writes to stderr, since no supervised omp pane runs headless |
+| Interrupt | `bin/fm-control.sh <id> interrupt` delivered a single Escape (`verified=agent-alive cancel=unconfirmed`), the composer read `empty`, and omp raised `agent_end` |
+| Exit | `bin/fm-control.sh <id> exit` typed `/quit`; Herdr then reported the pane `dead` |
+| Extension loading | a file named both by `-e` and by `<cwd>/.omp/extensions` loads twice; discovery is top-level and cwd-only |
+| Extension tools | the openai-codex model invokes a registered tool by writing `xd://<tool>` through omp's virtual-file bridge |
+
+### End-to-end
+
+A throwaway scout was spawned through `bin/fm-spawn.sh --scout --harness omp --model openai-codex/gpt-6-astra --effort low` on Herdr and driven to completion:
+
+1. the launch delivered its brief positionally under the tracked posture overlay and the agent executed it with no approval prompt;
+2. the busy record moved seed, busy, idle exactly as the extension contract states;
+3. the report landed and the `done:` status line was appended;
+4. `bin/fm-send.sh` rang the doorbell once the composer read `empty`, and the worker opened a turn on the inbox record;
+5. `bin/fm-control.sh <id> interrupt` cancelled the running turn;
+6. `bin/fm-control.sh <id> exit` stopped the agent and `bin/fm-teardown.sh` returned the worktree and closed the item.
+
+`FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` refreshes the primary evidence; the worker path above is refreshed by repeating the scout dispatch after any omp upgrade.

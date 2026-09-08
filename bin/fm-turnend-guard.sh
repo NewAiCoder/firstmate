@@ -242,6 +242,8 @@ block_stop() {
       printf '●  %s task(s) in flight, but %s.\n' "$FM_SUP_IN_FLIGHT" "$watcher_desc"
     elif [ "$FM_SUP_SOURCES" -gt 0 ]; then
       printf '●  %s process-event source(s) registered, but %s.\n' "$FM_SUP_SOURCES" "$watcher_desc"
+    elif [ "$FM_SUP_CHECKS" -gt 0 ]; then
+      printf '●  %s registered custom check(s), but %s.\n' "$FM_SUP_CHECKS" "$watcher_desc"
     else
       printf '●  X-mode relay polling needs supervision, but %s.\n' "$watcher_desc"
     fi
@@ -477,6 +479,8 @@ if [ "$terminal_status" -eq 0 ]; then
     NEED_DESC="$FM_SUP_IN_FLIGHT task(s) in flight"
   elif [ "$FM_SUP_SOURCES" -gt 0 ]; then
     NEED_DESC="$FM_SUP_SOURCES process-event source(s) registered"
+  elif [ "$FM_SUP_CHECKS" -gt 0 ]; then
+    NEED_DESC="$FM_SUP_CHECKS registered custom check(s)"
   else
     NEED_DESC="X-mode relay polling active"
   fi
