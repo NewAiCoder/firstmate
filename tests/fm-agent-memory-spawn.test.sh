@@ -128,7 +128,14 @@ make_spawn_case() {
   touch "$home/state/.last-watcher-beat"
   id="$name-z1"
   mkdir -p "$home/data/$id"
-  printf 'brief for %s\n' "$id" > "$home/data/$id/brief.md"
+  cat > "$home/data/$id/brief.md" <<EOF
+# Task
+## Captain's intent
+Exercise the agent-memory spawn wrapping for $id.
+
+## Firstmate spec
+Verify the spawned launch command and meta reflect memory throttling.
+EOF
   printf '%s\n' "$home|$proj|$wt|$fakebin|$launchlog|$id"
 }
 
