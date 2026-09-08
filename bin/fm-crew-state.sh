@@ -54,7 +54,14 @@
 #   3. Reconcile the status log: if its last line says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
-#      agree, and are reported as parked.
+#      agree, and are reported as parked. Separately, opt-in
+#      config/paused-run-failed-absorb lets a declared paused: line outrank a
+#      failed run-step for up to FM_PAUSED_RUN_FAILED_ABSORB_SECS (default
+#      3600) measured off the status log's own mtime: unlike the
+#      needs-decision/blocked reconciliation, this changes the emitted STATE
+#      to paused, not just its detail, because the crew never actually
+#      stopped waiting - only the run underneath it (e.g. the no-mistakes
+#      daemon dying mid-run) did.
 #   4. No run for this crew (pre-validation, or kind=scout): fall back to the
 #      recorded backend's pane busy state, then the status log's last line only
 #      when its verb maps to a recognized run-state. Decision-only events such as
@@ -98,8 +105,21 @@ ID=${1:-}
 # state read resolves the same task generation selected by that snapshot.
 META=${FM_CREW_STATE_META_OVERRIDE:-"$STATE/$ID.meta"}
 LOG=${FM_CREW_STATE_STATUS_OVERRIDE:-"$STATE/$ID.status"}
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 NM_TIMEOUT=${FM_CREW_STATE_NM_TIMEOUT:-10}
 case "$NM_TIMEOUT" in ''|*[!0-9]*) NM_TIMEOUT=10 ;; esac
+# Longest a declared paused: line may outrank a failed/cancelled run-step under
+# config/paused-run-failed-absorb, below. An invalid value fails closed (reads
+# as already-expired, so the run-step surfaces immediately).
+FM_PAUSED_RUN_FAILED_ABSORB_SECS=${FM_PAUSED_RUN_FAILED_ABSORB_SECS:-3600}
+# Portable mtime; Linux stat lacks -f, macOS stat lacks -c.
+stat_mtime() {
+  if [ "$(uname)" = Darwin ]; then
+    stat -f %m "$1" 2>/dev/null
+  else
+    stat -c %Y "$1" 2>/dev/null
+  fi
+}
 # How many of the most recent `no-mistakes runs` rows the cross-branch fallback
 # (fm_nm_runs_status_for_worktree in bin/fm-nm-run-lib.sh) scans. Generous
 # enough to still find a branch's own run on a busy multi-crew fleet without
@@ -571,6 +591,45 @@ if [ "$HAVE_RUN" = 1 ]; then
         else
           RUN_DETAIL="$RUN_DETAIL${SEP}status-log superseded (run $RUN_STATE)"
         fi
+      fi
+      ;;
+  esac
+
+  # Opt-in reconciliation (config/paused-run-failed-absorb) for a crew whose
+  # own declared external-wait pause (paused:) is outranked by a run that has
+  # since failed or been cancelled out from under it - the run-step is still
+  # authoritative for every other outcome, this narrows one specific case:
+  # the no-mistakes daemon itself dying mid-run (kunchenguid/firstmate#3285)
+  # reads every affected crew's run as failed even though each one is still
+  # exactly where its own paused: line said it would be, so both the stale
+  # path (crew_absorb_class) and fm-inactive-reconcile.sh present it as a
+  # captain-facing terminal outcome for a crew that never actually stopped.
+  # Off by default: unlike the needs-decision/blocked reconciliation above,
+  # this changes the emitted STATE, not just its detail, so a home opts in
+  # deliberately. Bounded by the status log's own mtime rather than a new
+  # marker file, keeping this script's read-only/side-effect-free contract -
+  # a crew that is not merely waiting on the daemon, but genuinely gone,
+  # still surfaces once FM_PAUSED_RUN_FAILED_ABSORB_SECS elapses. The stale
+  # path's own pane-aliveness check (bin/fm-watch.sh's pause_state_class)
+  # remains the backstop for a truly wedged pane either way, since it never
+  # trusts a declared pause on liveness alone.
+  case "$RUN_STATE" in
+    failed)
+      if [ -e "$CONFIG/paused-run-failed-absorb" ] && status_is_paused "$LOG_LINE"; then
+        log_mtime=$(stat_mtime "$LOG")
+        case "$log_mtime" in
+          ''|*[!0-9]*) log_age=$FM_PAUSED_RUN_FAILED_ABSORB_SECS ;;
+          *) log_age=$(( $(date +%s) - log_mtime )) ;;
+        esac
+        case "$FM_PAUSED_RUN_FAILED_ABSORB_SECS" in
+          ''|*[!0-9]*) ;;  # invalid bound -> never absorb, surfaces as failed
+          *)
+            if [ "$log_age" -lt "$FM_PAUSED_RUN_FAILED_ABSORB_SECS" ]; then
+              RUN_DETAIL="declared pause, run $RUN_STATE underneath (absorbed ${log_age}s)"
+              RUN_STATE=paused
+            fi
+            ;;
+        esac
       fi
       ;;
   esac

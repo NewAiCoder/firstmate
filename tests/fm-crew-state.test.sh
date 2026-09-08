@@ -25,6 +25,11 @@
 #       This is the direct regression pair for the 2026-07-02 herdr incident,
 #       proving the watcher's own absorb-only-when-provably-working predicate
 #       benefits from the fix in both directions.
+#   (l) config/paused-run-failed-absorb: off by default, a failed run-step
+#       still outranks a declared paused: log line exactly as before; opted
+#       in, a fresh paused: line outranks the failed run-step -> paused, an
+#       expired one (older than FM_PAUSED_RUN_FAILED_ABSORB_SECS) still
+#       surfaces -> failed, and an invalid bound fails closed -> failed.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -710,6 +715,74 @@ test_terminal_failed() {
   assert_contains "$out" "state: failed" "failed run -> failed"
   assert_contains "$out" "source: run-step" "failed -> run-step source"
   pass "terminal failed run is authoritative"
+}
+
+# (l) config/paused-run-failed-absorb: a declared paused: log line survives a
+# run-step that failed underneath it (kunchenguid/firstmate#3285 - e.g. the
+# no-mistakes daemon itself dying mid-run), but only once a home opts in, and
+# only within its bound.
+test_paused_run_failed_absorb_off_by_default() {
+  reset_fakes
+  local d; d=$(new_case pause-absorb-off)
+  make_repo_on_branch "$d/wt" fm/feat-pra
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-pra.meta" "window=fm:fm-feat-pra" "worktree=$d/wt" "kind=ship"
+  printf 'paused: no-mistakes run in progress, clears on its own\n' > "$d/state/feat-pra.status"
+  FM_FAKE_AXI_STATUS="$(run_failed fm/feat-pra)"
+  local out; out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" FM_CONFIG_OVERRIDE="$d/config-absent" "$CREW_STATE" feat-pra)
+  assert_contains "$out" "state: failed" "flag absent -> run-step still wins"
+  assert_contains "$out" "source: run-step" "flag absent -> run-step source"
+  pass "config/paused-run-failed-absorb is off by default"
+}
+
+test_paused_run_failed_absorb_fresh_pause_wins() {
+  reset_fakes
+  local d; d=$(new_case pause-absorb-fresh)
+  make_repo_on_branch "$d/wt" fm/feat-prb
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-prb.meta" "window=fm:fm-feat-prb" "worktree=$d/wt" "kind=ship"
+  printf 'paused: no-mistakes run in progress, clears on its own\n' > "$d/state/feat-prb.status"
+  FM_FAKE_AXI_STATUS="$(run_failed fm/feat-prb)"
+  mkdir -p "$d/config"
+  : > "$d/config/paused-run-failed-absorb"
+  local out; out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" FM_CONFIG_OVERRIDE="$d/config" "$CREW_STATE" feat-prb)
+  assert_contains "$out" "state: paused" "flag present, fresh pause -> paused"
+  assert_contains "$out" "source: run-step" "absorbed pause -> still run-step source"
+  assert_contains "$out" "declared pause, run failed underneath" "absorbed pause names the failed run underneath"
+  pass "a fresh declared pause outranks a failed run-step once opted in"
+}
+
+test_paused_run_failed_absorb_bound_expires() {
+  reset_fakes
+  local d; d=$(new_case pause-absorb-expired)
+  make_repo_on_branch "$d/wt" fm/feat-prc
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-prc.meta" "window=fm:fm-feat-prc" "worktree=$d/wt" "kind=ship"
+  printf 'paused: no-mistakes run in progress, clears on its own\n' > "$d/state/feat-prc.status"
+  touch -d "@$(( $(date +%s) - 100 ))" "$d/state/feat-prc.status"
+  FM_FAKE_AXI_STATUS="$(run_failed fm/feat-prc)"
+  mkdir -p "$d/config"
+  : > "$d/config/paused-run-failed-absorb"
+  local out; out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" FM_CONFIG_OVERRIDE="$d/config" \
+    FM_PAUSED_RUN_FAILED_ABSORB_SECS=50 "$CREW_STATE" feat-prc)
+  assert_contains "$out" "state: failed" "an expired pause still surfaces as failed"
+  pass "the absorb bound expires and the failed run-step surfaces again"
+}
+
+test_paused_run_failed_absorb_invalid_bound_fails_closed() {
+  reset_fakes
+  local d; d=$(new_case pause-absorb-invalid-bound)
+  make_repo_on_branch "$d/wt" fm/feat-prd
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-prd.meta" "window=fm:fm-feat-prd" "worktree=$d/wt" "kind=ship"
+  printf 'paused: no-mistakes run in progress, clears on its own\n' > "$d/state/feat-prd.status"
+  FM_FAKE_AXI_STATUS="$(run_failed fm/feat-prd)"
+  mkdir -p "$d/config"
+  : > "$d/config/paused-run-failed-absorb"
+  local out; out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" FM_CONFIG_OVERRIDE="$d/config" \
+    FM_PAUSED_RUN_FAILED_ABSORB_SECS=notanumber "$CREW_STATE" feat-prd)
+  assert_contains "$out" "state: failed" "an invalid bound fails closed to failed"
+  pass "an invalid FM_PAUSED_RUN_FAILED_ABSORB_SECS fails closed"
 }
 
 # (e) cross-branch attribution: `axi status` returns ANOTHER branch's run (the
@@ -1890,6 +1963,10 @@ test_top_level_fixing_ci_running_after_green_stays_working
 test_top_level_fixing_done_log_stays_working
 test_terminal_passed
 test_terminal_failed
+test_paused_run_failed_absorb_off_by_default
+test_paused_run_failed_absorb_fresh_pause_wins
+test_paused_run_failed_absorb_bound_expires
+test_paused_run_failed_absorb_invalid_bound_fails_closed
 test_cross_branch_attribution_via_runs_list
 test_cross_branch_attribution_picks_most_recent_row
 test_coarse_run_does_not_probe_other_branch_ci_log_for_ready_status
