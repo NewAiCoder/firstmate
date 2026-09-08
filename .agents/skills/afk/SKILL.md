@@ -24,9 +24,34 @@ batched digest rather than per-wake injections.
    The flag survives a firstmate restart, so recovery re-enters afk when it is present.
 
 2. **Ensure the sub-supervisor daemon is running as a tracked background process.**
-   Its hosting differs by harness.
-   Pick the right path:
-   - **Harness WITH a native in-pane tracked-background tool** (e.g. claude's
+   Prefer the terminal-backed path whenever the runtime backend supports a
+   non-visible terminal (tmux or herdr); reserve the harness-native background
+   path for a backend with neither (kunchenguid/firstmate#3930). This is a
+   preference, not a new mechanism - both paths already exist and share
+   `bin/fm-afk-start.sh` as the daemon entry.
+   **Why terminal-backed first:** the daemon is a small, otherwise-harmless
+   bash process, but Claude Code's low-memory guard has killed the
+   harness-native background job silently on transient RAM spikes - most
+   likely on a host that runs heavy no-mistakes/test suites - even with
+   several GB free, because the guard reads free memory rather than
+   attributing it to the actual consumer. A terminal-backed daemon sits
+   outside the harness's own job table and survives those spikes.
+   - **Backend WITH a non-visible-terminal primitive** (tmux, herdr - the
+     common case, including for Claude and Grok): run
+     `bin/fm-afk-launch.sh start`. It is the single owner of the daemon
+     terminal: it creates a NON-VISIBLE tracked terminal for the current
+     backend (a herdr dedicated `--no-focus` workspace, a detached tmux
+     session), records its exact id, and passes the captain pane in as
+     `FM_SUPERVISOR_TARGET` so the daemon injects into the captain, not its
+     own new pane. **Never manufacture a terminal by splitting the captain's
+     active pane** (`herdr pane split`): a split co-tenants the tab and
+     visibly shrinks the captain's pane (docs/herdr-backend.md "Away-mode
+     supervisor support").
+     A recorded daemon whose pid is no longer alive is reconciled and
+     relaunched automatically - `stop` first is never required for recovery.
+   - **Backend WITHOUT one** (`bin/fm-afk-launch.sh start` refuses with
+     "no non-visible daemon-launch primitive for backend ... yet") AND the
+     harness has a native in-pane tracked-background tool (e.g. claude's
      background bash, grok's background tool): first run
      `bin/fm-afk-launch.sh start-native`, then run
      `FM_AFK_STATE_PREPARED=1 bin/fm-afk-start.sh` through that native tool.
@@ -34,16 +59,8 @@ batched digest rather than per-wake injections.
      The launcher still owns lifecycle state and records the no-terminal mode, while the daemon inherits and auto-discovers the captain pane.
      If the native launch fails, run `bin/fm-afk-launch.sh stop` to roll back the prepared lifecycle.
      Do not wrap it in `nohup ... &` (Codex/herdr can reap fire-and-forget shell children after a tool call returns).
-   - **Harness WITHOUT one** (e.g. pi): run `bin/fm-afk-launch.sh start`. It is
-     the single owner of the daemon terminal: it creates a NON-VISIBLE tracked
-     terminal for the current backend (a herdr dedicated `--no-focus` workspace,
-     a detached tmux session), records its exact id, and passes the captain pane
-     in as `FM_SUPERVISOR_TARGET` so the daemon injects into the captain, not its
-     own new pane. **Never manufacture a terminal by splitting the captain's
-     active pane** (`herdr pane split`): a split co-tenants the tab and visibly
-     shrinks the captain's pane (docs/herdr-backend.md "Away-mode supervisor
-     support").
-   Both paths share `bin/fm-afk-start.sh` as the daemon entry.
+     A recorded daemon whose pid is no longer alive is reconciled and
+     relaunched automatically here too.
    The native path tells it that the launcher already prepared lifecycle state; the terminal-backed path lets the entry perform its existing state setup inside the new terminal.
    It exits immediately if the identity-backed daemon lock already names a live process, otherwise it execs `bin/fm-supervise-daemon.sh` in the foreground.
    The daemon is **presence-gated**: it injects escalations only while
