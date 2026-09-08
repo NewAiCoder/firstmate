@@ -141,7 +141,6 @@ mkdir -p "$STATE"
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
 WATCHER_DOWNTIME_MARKER="$STATE/.watcher-down"
-WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-300}}
 # The singleton-lock acquisition, EXIT trap, and the blocking supervision loop
 # all live below the source guard at the very bottom of this file (see "Main
 # entry"). Sourcing this file for unit tests therefore loads the functions -
