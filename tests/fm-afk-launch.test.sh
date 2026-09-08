@@ -179,6 +179,7 @@ unit_dead_pid_recovery_native() {
 }
 
 unit_dead_pid_recovery_terminal() {
+  command -v tmux >/dev/null 2>&1 || { echo "skip: tmux not found (dead-pid recovery terminal)"; return 0; }
   local st dead_pid lock out status
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-dead-terminal.XXXXXX")
   mkdir -p "$st/state"
