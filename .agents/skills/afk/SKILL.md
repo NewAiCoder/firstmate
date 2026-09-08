@@ -87,6 +87,9 @@ No `/back` is needed. The first genuine message is the return signal:
 
 Bias ambiguous cases toward exit: a present captain beats token savings, and
 a false exit is self-correcting (the captain re-runs `/afk`).
+When the captain wants this same token-saving supervision while staying
+present and chatting - ordinary messages should NOT exit it - that is
+`/quiet` (kunchenguid/firstmate#2356), not `/afk`.
 
 ## Orthogonal to approval authority
 
