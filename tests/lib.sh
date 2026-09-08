@@ -44,6 +44,14 @@ export FM_GATE_REFUSE_BYPASS=1
 # explicitly clear this to exercise the real wrapper.
 export FM_AGENT_MEMORY_DISABLE=1
 
+# Fixture directories are built with plain `mkdir -p`, so their permissions
+# inherit the invoking process's umask. A group-writable umask (0002, as used
+# by the no-mistakes daemon) makes fixture "private directory" checks
+# (bin/fm-procevent-lib.sh) fail nondeterministically depending on who runs
+# the suite. Pin a private-by-default umask once, at source time, so fixture
+# permissions never depend on the caller's environment.
+umask 022
+
 # Resolve the repo root from this library's own location. Consumed by sourcing
 # test files, not by this library, so it reads as "unused" here.
 # shellcheck disable=SC2034
