@@ -1,0 +1,73 @@
+Manual CLI drive of bin/fm-claude-trust.sh against real git worktrees and a real
+${CLAUDE_CONFIG_DIR}/.claude.json store (not the automated test harness — this is a
+direct hands-on run of the shipped script, captured for reviewer-visible evidence).
+
+=== Scenario A: fresh worktree, project has never been asked about imports ===
+$ CLAUDE_CONFIG_DIR=$HOME fm-claude-trust.sh <worktree> <project>
+before store: (absent)
+stdout:
+  trusted: /tmp/.../wt
+  trusted (project root): /tmp/.../proj
+exit=0
+after store:
+{
+  "projects": {
+    "/tmp/.../wt":  { "hasTrustDialogAccepted": true },
+    "/tmp/.../proj": { "hasTrustDialogAccepted": true }
+  }
+}
+=> Trust registers on both entries; import-consent flags are correctly withheld
+   since the project entry never carried an explicit approval. The worker still
+   wedges on the external-imports dialog, which is the honest/safe outcome.
+
+=== Scenario B: project entry already carries an explicit "Yes, allow" ===
+before store:
+{"hasCompletedOnboarding":true,"projects":{"/tmp/.../proj":{
+  "hasTrustDialogAccepted":true,
+  "hasClaudeMdExternalIncludesApproved":true,
+  "hasClaudeMdExternalIncludesWarningShown":true,
+  "allowedTools":["Read"]
+}}}
+stdout:
+  trusted: /tmp/.../wt
+  trusted (project root): /tmp/.../proj
+exit=0
+after store:
+{
+  "hasCompletedOnboarding": true,
+  "projects": {
+    "/tmp/.../proj": { "hasTrustDialogAccepted": true,
+      "hasClaudeMdExternalIncludesApproved": true,
+      "hasClaudeMdExternalIncludesWarningShown": true,
+      "allowedTools": ["Read"] },
+    "/tmp/.../wt": { "hasTrustDialogAccepted": true,
+      "hasClaudeMdExternalIncludesApproved": true,
+      "hasClaudeMdExternalIncludesWarningShown": true }
+  }
+}
+=> This is the actual fix: the worktree entry now carries the already-granted
+   import consent forward, which is what suppresses the "Allow external
+   CLAUDE.md file imports?" dialog for the spawned worker (that dialog is read
+   only from the canonical project-root entry by Claude Code itself, but the
+   worker's pane starts in the worktree). Unrelated keys (allowedTools,
+   hasCompletedOnboarding) survive untouched.
+
+=== Scenario C (adversarial): project entry already carries an explicit "No, disable" ===
+before store:
+{"hasCompletedOnboarding":true,"projects":{"/tmp/.../proj":{
+  "hasTrustDialogAccepted":true,
+  "hasClaudeMdExternalIncludesApproved":false,
+  "hasClaudeMdExternalIncludesWarningShown":true
+}}}
+stdout/stderr:
+  error: project entry for /tmp/.../proj in .../.claude.json already declined
+  external CLAUDE.md imports; refusing to override that consent
+  error: refusing to pre-register Claude trust: could not record trust for
+  '/tmp/.../wt' and project '/tmp/.../proj' in '.../.claude.json'
+exit=1
+after store: byte-identical to before (verified with `[ "$before" = "$after" ]`)
+=> The whole registration refuses rather than silently flipping a human's
+   explicit decline to true. Nothing is written to either entry — the worker
+   wedges on the trust dialog instead, which is the honest failure mode. This
+   is the safety property the change is built around: the script must never
+   manufacture consent the human never gave.
