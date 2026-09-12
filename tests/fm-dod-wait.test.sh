@@ -29,6 +29,7 @@ case "$BLOCK" in
 esac
 
 REGISTER_LINE=$(printf '%s\n' "$BLOCK" | grep 'register-clone')
+# shellcheck disable=SC2016  # single quotes are deliberate: this is a literal sed pattern, not meant to expand
 REGISTER_CMD=$(printf '%s\n' "$REGISTER_LINE" | sed -n 's/.*`\([^`]*register-clone[^`]*\)`.*/\1/p')
 if [ -z "$REGISTER_CMD" ]; then
   echo "FAIL - the block does not tell an out-of-worktree lane to register its clone"; FAIL=1
