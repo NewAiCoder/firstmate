@@ -396,6 +396,7 @@ unit_dead_pid_recovery_native() {
   local st dead_pid lock out status
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-dead-native.XXXXXX")
   mkdir -p "$st/state"
+  confirm_posture "$st" || fail "dead-pid recovery (native): could not confirm fixture posture"
   date '+%s' > "$st/state/.afk"
   printf 'none\t-\tnative\n' > "$st/state/.afk-daemon-terminal"
   sleep 600 &
@@ -423,6 +424,7 @@ unit_dead_pid_recovery_terminal() {
   local st dead_pid lock out status
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-dead-terminal.XXXXXX")
   mkdir -p "$st/state"
+  confirm_posture "$st" || fail "dead-pid recovery (terminal): could not confirm fixture posture"
   date '+%s' > "$st/state/.afk"
   sleep 600 &
   # shellcheck disable=SC2031 # The background PID is captured immediately in this shell.
