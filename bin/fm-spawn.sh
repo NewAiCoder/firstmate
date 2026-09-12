@@ -4269,21 +4269,9 @@ echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW
 # with no model turn, and its action rings this task's steering inbox. It is a
 # repeat watch because a pipeline changes state several times per run, and it
 # carries FM_HOME because fm-send refuses to resolve a target without one.
-# Arming is best-effort by design: a failure here costs a slower poll, never
-# the spawn, so it warns and continues.
+# bin/fm-nm-watch.sh owns the watch shape and re-arms idempotently, so a
+# relaunch converges on the watch its original spawn armed; a failure there
+# queues a durable check wake and never fails the spawn.
 if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
-    NM_SNAPSHOT="$STATE/$ID.nm-state"
-    if "$FM_ROOT/bin/fm-procevent-when.sh" arm "nm-state-$ID" \
-        --interval 45 --stable 1 --condition-timeout 60 --action-timeout 120 \
-        --repeat --action-env "FM_HOME=$FM_HOME" \
-        --condition "$FM_ROOT/bin/fm-nm-state-condition.sh" "$WT" "$NM_SNAPSHOT" \
-        --action "$FM_ROOT/bin/fm-send.sh" "$ID" \
-            "no-mistakes state changed: run \`no-mistakes axi status\` in your worktree, append \`resolved: run returned\`, and answer the parked gate." \
-        >/dev/null 2>&1
-    then
-        rm -f -- "$NM_SNAPSHOT"
-        echo "armed: when-nm-state-$ID (pipeline-state watch)"
-    else
-        echo "warning: could not arm the pipeline-state watch for $ID; the worker will fall back to a single status check per resume" >&2
-    fi
+    FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$FM_ROOT/bin/fm-nm-watch.sh" arm "$ID" || true
 fi

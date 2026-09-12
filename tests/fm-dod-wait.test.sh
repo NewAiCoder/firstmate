@@ -28,4 +28,9 @@ case "$BLOCK" in
   *) echo "FAIL - the declared-wait line was lost"; FAIL=1 ;;
 esac
 
+case "$BLOCK" in
+  *"fm-nm-watch.sh register-clone demo-task"*) echo "ok - a lane validating outside its worktree is told to register the clone" ;;
+  *) echo "FAIL - the block does not tell an out-of-worktree lane to register its clone"; FAIL=1 ;;
+esac
+
 exit "$FAIL"
