@@ -45,7 +45,9 @@
 #                       represented by the two digests below.
 #   6. fleet digest   - a compact data/backlog.md identity/metadata listing,
 #                       every state/*.meta, a bounded state/*.status tail,
-#                       state/.afk, and a cheap per-task endpoint-liveness read:
+#                       the away posture (state/.afk-contract and the legacy
+#                       state/.afk daemon flag), and a cheap per-task
+#                       endpoint-liveness read:
 #                       read-only, always runs.
 #   7. network checks - the result of the deferred network stage started back at
 #                       step 1, harvested WITHOUT waiting for it.
@@ -104,10 +106,10 @@
 #
 # Why lock first: the old documented order (bootstrap, THEN lock) let a
 # SECOND concurrent session run bootstrap's mutating sweeps - converging
-# secondmate homes, retrying pending handoff outboxes, writing X-mode artifacts,
-# and fetching or fast-forwarding every project clone - before ever discovering
-# another session already holds the lock. Two sessions racing those sweeps is
-# exactly the hazard the lock exists to prevent, so locking first closes the
+# secondmate homes, retrying pending handoff outboxes and receiver wakes, writing
+# X-mode artifacts, and fetching or fast-forwarding every project clone - before
+# ever discovering another session already holds the lock. Two sessions racing
+# those sweeps is exactly the hazard the lock exists to prevent, so locking first closes the
 # hole outright: only the session that actually wins the lock ever touches
 # shared mutable state.
 #
@@ -152,7 +154,7 @@
 # stay out of the startup digest; the same never-bound-a-held-or-blocked-row
 # rule applies, recognized there from the title line's own hold/blocked-by
 # markers.
-# Full bodies are targeted follow-up only: `tasks-axi show <id> --full` when
+# Full bodies are targeted follow-up only: `bin/fm-tasks-axi.sh show <id> --full` when
 # compatible tasks-axi is available, or `data/backlog.md` when the file body is
 # truly needed.
 #
@@ -384,7 +386,7 @@ print_file_or_absent() {
 }
 
 print_backlog_pointer() {
-  printf 'Full task bodies remain available on demand: tasks-axi show <id> --full when compatible tasks-axi is available, or data/backlog.md.\n'
+  printf 'Full task bodies remain available on demand: bin/fm-tasks-axi.sh show <id> --full when compatible tasks-axi is available, or data/backlog.md.\n'
 }
 
 # A queued title line whose own text already marks it held or blocked. The
@@ -451,8 +453,8 @@ strip_axi_help() {
 # and every other line it prints (its count, its public-followup line) passes
 # through untouched. Whatever is cut is disclosed exactly.
 print_ready_queued_bounded() {
-  local ready=$1 path=$2
-  printf '%s\n' "$ready" | awk -v max="$QUEUED_LIMIT" -v path="$path" '
+  local ready=$1
+  printf '%s\n' "$ready" | awk -v max="$QUEUED_LIMIT" '
     /^help\[/ { exit }
     /^ready\[/ { rows = 1; print; next }
     rows && /^[[:space:]]/ {
@@ -465,7 +467,7 @@ print_ready_queued_bounded() {
       if (total > 0) {
         printf "(shown %d of %d ready queued item(s))\n", shown, total
         if (total > shown) {
-          printf "(%d more queued - tasks-axi ready --file %s)\n", total - shown, path
+          printf "(%d more queued - bin/fm-tasks-axi.sh ready)\n", total - shown
         }
       }
     }
@@ -492,7 +494,7 @@ print_backlog_tasks_axi_compact() {
     printf '\nblocked queued:\n'
     printf '%s\n' "$blocked" | strip_axi_help
     printf '\nready queued (dispatchable now):\n'
-    print_ready_queued_bounded "$ready" "$path"
+    print_ready_queued_bounded "$ready"
     return 0
   fi
   printf 'tasks-axi compact listing failed; falling back to title-line rendering.\n'
@@ -814,7 +816,7 @@ Go to a source directly only when:
   - an individual full status log is needed for older wake-event history, or a
     status line was capped and its tail matters (each task's full log path is
     printed with its tail),
-  - a full task body is needed (tasks-axi show <id> --full, or data/backlog.md),
+  - a full task body is needed (bin/fm-tasks-axi.sh show <id> --full, or data/backlog.md),
   - the backlog listing disclosed omitted queued items and this turn needs them,
   - the NETWORK CHECKS section reported its checks still IN PROGRESS and this
     turn needs their verdict (bin/fm-startup-network.sh report),
@@ -873,11 +875,22 @@ done
 [ "$ORPHAN_STATUS_FOUND" -eq 1 ] || printf '(none)\n'
 
 subsection "AFK"
-if [ -e "$STATE/.afk" ]; then
+# The away posture is the record (bin/fm-afk-contract.sh); the legacy flag
+# still marks a running daemon on the harnesses that launch one, or a quiet-
+# mode session with no away posture at all.
+if [ -f "$STATE/.afk-contract" ]; then
+  printf 'present - away posture recorded at %s (hold-for-return only; bin/fm-afk-contract.sh readback for the mandate)' \
+    "$("$SCRIPT_DIR/fm-afk-contract.sh" field entered 2>/dev/null || printf unknown)"
+  if [ -e "$STATE/.afk" ]; then
+    printf '; the away daemon owns the watcher.\n'
+  else
+    printf '; no daemon runs, the ordinary supervision session continues.\n'
+  fi
+elif [ -e "$STATE/.afk" ]; then
   if [ "$AFK_MODE" = quiet ]; then
     printf 'present - quiet-mode supervision is active; the daemon owns the watcher, only an explicit /quiet off exits it.\n'
   else
-    printf 'present - away-mode supervision is active; the daemon owns the watcher.\n'
+    printf 'present - away-mode supervision is active; the daemon owns the watcher (legacy flag with no posture record).\n'
   fi
 else
   printf 'absent\n'
