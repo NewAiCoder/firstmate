@@ -1,0 +1,11 @@
+Scenario: the 2026-09-12 incident - a worker's status log says 'paused: no-mistakes run in progress' while its pipeline actually failed in a registered out-of-worktree clone.
+
+=== BEFORE register-clone: fm-crew-state.sh (run not found in the task worktree) ===
+state: unknown · source: pane · harness state unavailable (unknown missing)
+
+=== worker runs: fm-nm-watch.sh register-clone live-repro <clone-path> ===
+registered: live-repro pipeline runs in /tmp/tmp.922L2ub01H/clone
+armed: when-nm-state-live-repro (pipeline-state watch on /tmp/tmp.922L2ub01H/clone)
+
+=== AFTER register-clone: fm-crew-state.sh (failed run now outranks the stale paused claim) ===
+state: failed · source: run-step · run failed
