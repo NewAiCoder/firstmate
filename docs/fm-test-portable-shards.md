@@ -57,10 +57,9 @@ Each shard is still strictly serial in itself, and separate runners mean no two 
 `.github/workflows/ci.yml` derives the same `n` from `strategy.job-total` rather than a literal, so changing the shard count in either file without the other fails the lane loudly instead of leaving part of the required suite unrun.
 
 Assignment is longest-processing-time bin packing over per-script duration hints embedded in `bin/fm-test-run.sh`.
-The 145 current hints include the slowest measurements retained from the `fm-test-timing-portable-serial-*` artifacts of three green CI runs on 2026-09-01, [33558082172](https://github.com/kunchenguid/firstmate/actions/runs/33558082172), [33523597838](https://github.com/kunchenguid/firstmate/actions/runs/33523597838), and [33463326167](https://github.com/kunchenguid/firstmate/actions/runs/33463326167), the completed-script measurements from [run 34342484144](https://github.com/kunchenguid/firstmate/actions/runs/34342484144), plus the 5121 ms native-Windows focused runner measurement for `tests/fm-pi-windows-shell-invocation.test.sh` from 2026-09-06T21:02Z.
-Those per-script maxima total 4312606 ms of conservative balance weight.
+145 of the current hints include the slowest measurements retained from the `fm-test-timing-portable-serial-*` artifacts of three green CI runs on 2026-09-01, [33558082172](https://github.com/kunchenguid/firstmate/actions/runs/33558082172), [33523597838](https://github.com/kunchenguid/firstmate/actions/runs/33523597838), and [33463326167](https://github.com/kunchenguid/firstmate/actions/runs/33463326167), the completed-script measurements from [run 34342484144](https://github.com/kunchenguid/firstmate/actions/runs/34342484144), plus the 5121 ms native-Windows focused runner measurement for `tests/fm-pi-windows-shell-invocation.test.sh` from 2026-09-06T21:02Z; those per-script maxima total 4312606 ms of conservative balance weight.
 Taking the slowest of several CI runs rather than a single run keeps the balance honest on a slow runner.
-A script with no hint gets the conservative `PORTABLE_SERIAL_DEFAULT_WEIGHT_MS` default; the current 154-script lane has nine such scripts, bringing its assignment weight to 4555606 ms.
+The 2026-09-12 fork-sync merge (b7f80f2e) added 27 more serial scripts with no recorded hint; each was given a locally-measured full-suite hint pending refresh from CI's own serial shards, so the lane's current 173 scripts carry zero members on the conservative `PORTABLE_SERIAL_DEFAULT_WEIGHT_MS` fallback, at a combined assignment weight of 4416487 ms.
 Hints only affect balance: the coverage guard keeps the partition complete and disjoint whatever they say, so a stale hint costs a slower shard rather than lost coverage.
 Balance is still worth keeping current, because enough unmeasured scripts let one shard carry more than twice another shard's real work and reach the job cap while another runner sits idle.
 That is not hypothetical: by 2026-09-01 the lane had grown from 116 to 139 scripts and from ~42 to ~63 minutes, 17 scripts were still unmeasured, and several hints were low by 2-5x, so shard 3 of 4 ran 17-20 minutes against its 20-minute cap while shard 1 ran 11.5 minutes and run [33574154856](https://github.com/kunchenguid/firstmate/actions/runs/33574154856) timed out seconds after a passing test.
@@ -69,14 +68,14 @@ Refresh the hints whenever the serial lane gains scripts, rather than waiting fo
 
 | Lane | Script count | Estimated duration |
 |---|---:|---:|
-| `portable-serial-1of5` | 30 | 911111 ms (~15.19 min) |
-| `portable-serial-2of5` | 31 | 911128 ms (~15.19 min) |
-| `portable-serial-3of5` | 32 | 911128 ms (~15.19 min) |
-| `portable-serial-4of5` | 31 | 911128 ms (~15.19 min) |
-| `portable-serial-5of5` | 30 | 911111 ms (~15.19 min) |
-| imbalance | | 17 ms |
+| `portable-serial-1of5` | 35 | 883289 ms (~14.72 min) |
+| `portable-serial-2of5` | 35 | 883302 ms (~14.72 min) |
+| `portable-serial-3of5` | 35 | 883304 ms (~14.72 min) |
+| `portable-serial-4of5` | 34 | 883299 ms (~14.72 min) |
+| `portable-serial-5of5` | 34 | 883293 ms (~14.72 min) |
+| imbalance | | 15 ms |
 
-The current table is generated from the runner's retained maxima plus its default for the nine unhinted scripts.
+The current table is generated from the runner's retained maxima; none of the 173 scripts currently fall back to the default weight.
 Run 34342484144 observed a shard reach about 20 minutes of passing work, so the 30-minute job cap keeps meaningful hang-tripwire margin for job setup and runner-speed spread.
 
 The single longest script, `tests/fm-watch-triage.test.sh` at 262626 ms, is the floor for any shard count.
