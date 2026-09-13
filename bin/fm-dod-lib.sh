@@ -38,6 +38,12 @@
 # conflicting role is superseded rather than duplicated.
 # fm_ship_rule_one owns the mode-specific first ship safety rule shared by an
 # ordinary ship brief and the durable contract written during scout promotion.
+# The no-mistakes block interpolates $FM_ROOT so the generated brief carries an
+# absolute path to bin/fm-nm-watch.sh. bin/fm-brief.sh and bin/fm-promote.sh
+# both already set FM_ROOT before calling fm_dod_block; this default keeps the
+# library self-sufficient under `set -u` for anything else that sources it
+# directly, such as a test.
+FM_ROOT="${FM_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 fm_brief_worker_role() {  # <state-dir> <task-id>
   local state=$1 task_id=$2
@@ -276,7 +282,8 @@ When the captain's intent refers to a report, decision, or PR ("do items 1, 2, 3
 This replaces the no-mistakes skill's advice to enrich \`--intent\` with decisions and tradeoffs; that advice does not apply to Firstmate-dispatched work.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
 While a pipeline round runs, do NOT poll and do NOT sleep. Append \`paused: no-mistakes run in progress, clears on its own\` to the status file and END YOUR TURN. A deterministic watch registered for this task (\`when-nm-state-$id\`, armed at spawn) polls the pipeline state outside any model turn and rings your steering inbox the moment that state changes; resume from that ring, append \`resolved: run returned\`, and answer the parked gate with a short foreground call.
-A \`sleep\` between status checks is a defect here, not patience: every wake-up is a full model turn that re-reads your whole context to learn nothing.
+If the pipeline must run somewhere other than this worktree (for example a throwaway clone an upstream workflow requires), run \`$FM_ROOT/bin/fm-nm-watch.sh register-clone $id <absolute clone path>\` before that run starts, so that watch and firstmate's state read follow the run there; an unregistered out-of-worktree run is invisible to both, and your paused line then reads as a stall.
+A \`sleep\` between status checks is a defect here, not patience: every wake-up is a full model turn that re-reads your whole context to learn nothing, and those turns were 31% of the fleet's turns and 9.95B tokens in the week of 2026-08-29.
 If the ring never comes and you are resumed for another reason, one \`no-mistakes axi status\` call is fine; a loop of them is not.
 
 A single drive call (\`no-mistakes axi run\` or \`axi respond\`) blocks until the next gate or outcome, which routinely outlives one fix round (capped around thirty minutes, with up to three rounds chaining).
