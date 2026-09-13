@@ -87,7 +87,8 @@ A PR ready for merge keeps the merge authority from `AGENTS.md` section 7, and a
 While the away-posture record exists, a merge proceeds only when that task's recorded yolo posture is on or its id is in the record's merge-grant list; otherwise it is held for the captain's return.
 A merge grant never releases a captain hold, and it expires when the away record is archived.
 `--allow-red` remains attended-only and is refused while the record exists.
-A merge under away authority must be synchronous; `fm-pr-merge.sh` refuses auto-merge and any GitHub queue state that cannot prove an immediate merge while the record exists.
+A merge under away authority must be synchronous; `fm-pr-merge.sh` refuses auto-merge for every task while the record exists.
+It also refuses a GitHub merge whose queue state cannot prove an immediate merge, unless the task is in the record's merge-grant list, because a named grant is the captain's own decision for that merge while yolo alone is not.
 A mandate clause is the captain's explicit instruction given before leaving, recorded with its named object and condition; a clause is never inferred, never applied by analogy, and expires at return.
 Forbidden, destructive, irreversible, and security-sensitive actions are never pre-authorizable regardless of clause text, and no recorded clause is authority by itself.
 This release records clauses and does not execute them.
