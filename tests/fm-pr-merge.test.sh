@@ -2731,7 +2731,8 @@ test_away_posture_refuses_asynchronous_merge_paths() {
   mkdir -p "$case_dir/wt"
   add_gh_mocks "$case_dir" "$head"
   printf 'merge_method=MERGE\n' > "$case_dir/github-rules"
-  write_away_record "$case_dir" --grant task-x1
+  printf '\nyolo=on\n' >> "$case_dir/state/task-x1.meta"
+  write_away_record "$case_dir"
   set +e
   run_pr_merge "$case_dir" task-x1 "$url" \
     > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -2778,6 +2779,72 @@ test_away_posture_refuses_asynchronous_merge_paths() {
     *) fail "away-gitlab-sync: the final glab flag did not force an immediate merge: '$merge_line'" ;;
   esac
   pass "away posture permits immediate merges but refuses every asynchronous path"
+}
+
+test_away_queue_proof_is_skipped_only_for_a_named_grant() {
+  local case_dir rc url head
+  head=aeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae
+  url=https://github.com/example/repo/pull/90
+
+  case_dir=$(make_case away-yolo-unreadable-queue)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" "$head"
+  : > "$case_dir/github-rules-fail"
+  printf '\nyolo=on\n' >> "$case_dir/state/task-x1.meta"
+  write_away_record "$case_dir"
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$url" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 2 "$rc" "away-yolo-unreadable-queue: yolo alone must still need a provable queue"
+  assert_grep 'merge-queue state does not prove an immediate merge' "$case_dir/stderr" \
+    "away-yolo-unreadable-queue: refusal did not explain the away restriction"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "away-yolo-unreadable-queue: gh received a merge on an unprovable queue"
+
+  local rules
+  for rules in fail queue; do
+    case_dir=$(make_case "away-grant-$rules-queue")
+    mkdir -p "$case_dir/wt" "$case_dir/home"
+    add_gh_mocks "$case_dir" "$head"
+    if [ "$rules" = fail ]; then
+      : > "$case_dir/github-rules-fail"
+    else
+      printf 'merge_method=MERGE\n' > "$case_dir/github-rules"
+    fi
+    write_away_record "$case_dir" --grant task-x1
+    FM_TEST_HOME="$case_dir/home" run_pr_merge "$case_dir" task-x1 "$url" \
+      > "$case_dir/stdout" 2> "$case_dir/stderr" \
+      || fail "away-grant-$rules-queue: a granted merge should not need a provable queue"
+    assert_logged_gh_merge "$case_dir" 90 example/repo --squash
+    assert_no_grep 'rules/branches' "$case_dir/gh.log" \
+      "away-grant-$rules-queue: the queue proof was still read for a granted task"
+    assert_grep "merge landed: task-x1 $url away-grant" "$case_dir/state/.wake-queue" \
+      "away-grant-$rules-queue: the durable outcome did not tag away-grant"
+  done
+
+  case_dir=$(make_case away-grant-no-queue)
+  mkdir -p "$case_dir/wt" "$case_dir/home"
+  add_gh_mocks "$case_dir" "$head"
+  : > "$case_dir/github-rules"
+  write_away_record "$case_dir" --grant task-x1
+  FM_TEST_HOME="$case_dir/home" run_pr_merge "$case_dir" task-x1 "$url" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "away-grant-no-queue: a granted merge on a queue-less base should succeed"
+  assert_logged_gh_merge "$case_dir" 90 example/repo --squash
+
+  case_dir=$(make_case attended-queue-unread)
+  mkdir -p "$case_dir/wt" "$case_dir/home"
+  add_gh_mocks "$case_dir" "$head"
+  : > "$case_dir/github-rules-fail"
+  FM_TEST_HOME="$case_dir/home" run_pr_merge "$case_dir" task-x1 "$url" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "attended-queue-unread: an attended merge should not depend on the queue proof"
+  assert_logged_gh_merge "$case_dir" 90 example/repo --squash
+  assert_no_grep 'rules/branches' "$case_dir/gh.log" \
+    "attended-queue-unread: an attended merge read the away queue proof"
+  pass "while away only a named grant skips the queue proof, and attended merges never read it"
 }
 
 test_away_grant_does_not_bypass_red_or_identity() {
@@ -3039,6 +3106,7 @@ test_allow_red_is_refused_while_away
 test_allow_red_requires_one_separate_name
 test_away_grant_and_yolo_and_hold_for_return
 test_away_posture_refuses_asynchronous_merge_paths
+test_away_queue_proof_is_skipped_only_for_a_named_grant
 test_away_grant_does_not_bypass_red_or_identity
 test_unreadable_away_record_refuses_merge
 test_away_record_cannot_change_between_the_authority_read_and_the_merge
