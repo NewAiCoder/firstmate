@@ -37,5 +37,8 @@ want "Severity alone decides" "severity, not category, governs the round-3 cap"
 want "regardless of category" "warning/error/ask-user is fixed regardless of category"
 want "only \`info\`-severity findings" "only info severity defers, no other severity"
 want "still fixed, never deferred" "a style/naming finding at warning or error severity is not deferred"
+want "auto_fix.review" "the auto_fix.review=0 worker-driven case is named"
+want "axi respond --action fix" "worker-driven fix responses are named as what gets counted"
+want "every such worker-driven fix response is a round" "a worker-driven fix response counts as a round toward the cap"
 
 exit "$FAIL"

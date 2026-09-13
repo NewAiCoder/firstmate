@@ -101,4 +101,29 @@ print(c.execute('SELECT 1 FROM lanes WHERE pr_url=?', (sys.argv[2],)).fetchone()
 " "$DB" "https://github.com/o/r/pull/9")
 say "an unresolvable base ref records no lane row" "None" "$GOT"
 
+# A base ref can resolve to a real commit in the worktree yet still share no
+# history with HEAD (e.g. origin/HEAD rewritten onto unrelated history after
+# a force-push): "base...HEAD" then has no merge base and the diff itself
+# fails. fm_diff_size swallows that failure into the same "0 0" it returns
+# for a genuine zero-line lane, so this must still be skipped, not stored.
+UNRELATED="$TMP/unrelated"
+mkdir -p "$UNRELATED"
+git -C "$UNRELATED" init -q -b other
+git -C "$UNRELATED" config user.email t@t
+git -C "$UNRELATED" config user.name t
+printf 'z\n' > "$UNRELATED/z.txt"
+git -C "$UNRELATED" add z.txt
+git -C "$UNRELATED" commit -q -m unrelated
+UNRELATED_HEAD=$(git -C "$UNRELATED" rev-parse HEAD)
+git -C "$WT" fetch -q "$UNRELATED" "$UNRELATED_HEAD:refs/unrelated-head"
+
+TELEMETRY_DB="$DB" bash "$ROOT/bin/fm-lane-size-record.sh" \
+    demo-task-unrelated-history "$WT" refs/unrelated-head "https://github.com/o/r/pull/10"
+GOT=$(python3 -c "
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+print(c.execute('SELECT 1 FROM lanes WHERE pr_url=?', (sys.argv[2],)).fetchone())
+" "$DB" "https://github.com/o/r/pull/10")
+say "a base with no common history records no lane row" "None" "$GOT"
+
 exit "$FAIL"

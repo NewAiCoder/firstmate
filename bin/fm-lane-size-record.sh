@@ -30,6 +30,15 @@ command -v python3 >/dev/null 2>&1 || exit 0
 [ -d "$WORKTREE" ] || exit 0
 RESOLVED_BASE=$(git -C "$WORKTREE" rev-parse --verify --quiet "$BASE" 2>/dev/null) || exit 0
 
+# A resolved base can still make the three-dot diff itself fail, most often
+# because the base and HEAD share no common history (e.g. origin/HEAD
+# rewritten onto unrelated history after a rebase or force-push): "A...B"
+# diffs against merge-base(A,B), and with no merge base git errors rather
+# than diffing. fm_diff_size swallows that error into the same "0 0" it
+# returns for a genuine zero-line lane, so check the merge base exists here,
+# before the measurement, rather than trust fm_diff_size's fail-open result.
+git -C "$WORKTREE" merge-base "$RESOLVED_BASE" HEAD >/dev/null 2>&1 || exit 0
+
 read -r LINES FILES <<< "$(fm_diff_size "$WORKTREE" "$RESOLVED_BASE")"
 HOST=$(uname -n | cut -d. -f1 | tr '[:upper:]' '[:lower:]')
 PROJECT=$(basename "$(git -C "$WORKTREE" rev-parse --show-toplevel 2>/dev/null || echo "$WORKTREE")")
