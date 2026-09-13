@@ -382,7 +382,7 @@ cmd_run() {
     emit_doc "$sid" rejected "cannot stage command output; nothing was executed" 0 '' ''
     exit 0
   fi
-  trap 'rm -f -- "$out"' EXIT
+  trap 'fm_procevent_source_lock_release "$sid"; rm -f -- "$out"' EXIT
 
   while :; do
     now=$(date +%s)
@@ -434,7 +434,14 @@ cmd_run() {
   # rather than trusting the value cached at spec_load time when this poll
   # loop started: a rebind-all can run (e.g. after a self-update) while this
   # process is still polling, and only a fresh read sees its rebound hash.
+  # rebind_one publishes the spec and trust files as two separate renames, so
+  # the lock brackets this reload exactly as it brackets that publish,
+  # keeping the reader from observing a torn intermediate state.
   local current_action_hash
+  if ! fm_procevent_source_lock_acquire "$sid"; then
+    emit_doc "$sid" rejected "refused without executing anything: cannot lock the watch source" "$polls" '' ''
+    exit 0
+  fi
   if ! spec_load "$sid"; then
     emit_doc "$sid" rejected "refused without executing anything: $SPEC_ERROR" "$polls" '' ''
     exit 0
@@ -445,6 +452,7 @@ cmd_run() {
       "refused without executing the action: its bytes do not match the registered trust binding" "$polls" '' ''
     exit 0
   fi
+  fm_procevent_source_lock_release "$sid"
 
   # Claim the fire durably and exclusively BEFORE the action, so no restart or
   # concurrent runner can ever run the action a second time.
