@@ -1,0 +1,15 @@
+=== Targeted test file (real product CLI driven via run_return subprocess) ===
+$ bash tests/fm-afk-return.test.sh
+ok - the return brief leads with supervisor health and names every detected gap
+ok - the return brief does not report an already-acked watcher-down marker as an open gap
+(19 total cases in file, all ok)
+
+=== Regression proof: same test against pre-fix bin/fm-afk-return.sh (base commit 0962d4a) ===
+not ok - an acked recovery marker was reported as an open gap (unexpected: 'GAP: watcher downtime was detected')
+
+=== Manual live drive of the real bin/fm-afk-return.sh CLI across the marker state space ===
+[acked]          token=acked:downtime:fixture-generation      expected=clean got=clean
+[pending]        token=pending:downtime:fixture-generation    expected=gap   got=gap
+[announced]      token=announced:downtime:fixture-generation  expected=gap   got=gap
+[acked-handling] token=acked:handling:fixture-generation       expected=clean got=clean
+[garbage]        token=not-a-real-token                        expected=gap   got=gap
