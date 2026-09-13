@@ -749,6 +749,7 @@ fi
 stage supervision-instructions
 AFK_PRESENT=0
 [ -e "$STATE/.afk" ] && AFK_PRESENT=1
+AFK_MODE=$(fm_afk_mode "$STATE")
 X_MODE_PRESENT=0
 [ -f "$CONFIG/x-mode.env" ] && X_MODE_PRESENT=1
 
@@ -789,6 +790,7 @@ fi
   --harness "$PRIMARY_HARNESS" \
   --read-only "$READ_ONLY" \
   --afk "$AFK_PRESENT" \
+  --afk-mode "$AFK_MODE" \
   --x-mode "$X_MODE_PRESENT"
 
 # --- 5. read-once contract -------------------------------------------------
@@ -884,7 +886,11 @@ if [ -f "$STATE/.afk-contract" ]; then
     printf '; no daemon runs, the ordinary supervision session continues.\n'
   fi
 elif [ -e "$STATE/.afk" ]; then
-  printf 'present - away-mode supervision is active; the daemon owns the watcher (legacy flag with no posture record).\n'
+  if [ "$AFK_MODE" = quiet ]; then
+    printf 'present - quiet-mode supervision is active; the daemon owns the watcher, only an explicit /quiet off exits it (legacy flag with no posture record).\n'
+  else
+    printf 'present - away-mode supervision is active; the daemon owns the watcher (legacy flag with no posture record).\n'
+  fi
 else
   printf 'absent\n'
 fi
@@ -947,6 +953,14 @@ if [ "$READ_ONLY" -eq 1 ]; then
 This session did not acquire the fleet lock. Stay read-only: do not arm,
 drain, spawn, steer, merge, or repair fleet state from here. Only a session
 with verified fleet-lock ownership may perform mutable follow-up.
+
+EOF
+elif [ "$AFK_PRESENT" -eq 1 ] && [ "$AFK_MODE" = quiet ]; then
+  cat <<'EOF'
+Quiet mode is active. Follow the supervision operating instructions block
+above: load /quiet and ensure the daemon is running, because the daemon owns
+watcher supervision. Ordinary captain chat does not exit it; only an
+explicit /quiet off does.
 
 EOF
 elif [ "$AFK_PRESENT" -eq 1 ]; then

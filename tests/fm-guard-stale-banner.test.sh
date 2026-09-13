@@ -169,6 +169,22 @@ test_first_stale_call_prints_full_banner() {
   pass "fm-guard stale banner: first stale call prints the full actionable banner"
 }
 
+test_full_banner_names_quiet_mode_when_active() {
+  # kunchenguid/firstmate#2356: the banner's repair line must not misdirect a
+  # captain in quiet mode to /afk - fm-guard.sh threads the flag's declared
+  # mode through to fm-supervision-instructions.sh's --afk-mode.
+  local dir home out
+  dir=$(make_guard_case quiet-mode-banner)
+  home=$(case_home "$dir")
+  printf 'quiet\n%s\n' "$(date '+%s')" > "$home/state/.afk"
+  out=$(run_guard_case "$dir")
+  assert_contains "$out" "Quiet mode owns watcher supervision; load /quiet" \
+    "full banner did not name /quiet for an active quiet-mode flag"
+  assert_not_contains "$out" "Away mode owns watcher supervision" \
+    "full banner misdirected a quiet-mode captain to /afk"
+  pass "fm-guard stale banner: repair line is quiet-mode-aware, not hardcoded to away mode"
+}
+
 test_repeated_same_episode_prints_reminder_only() {
   local dir out1 out2 marker lines
   dir=$(make_guard_case repeated-stale)
@@ -870,6 +886,7 @@ test_pi_harness_routes_itself_to_the_extension_model() {
 }
 
 test_first_stale_call_prints_full_banner
+test_full_banner_names_quiet_mode_when_active
 test_repeated_same_episode_prints_reminder_only
 test_pi_harness_routes_itself_to_the_extension_model
 test_extension_handoff_with_live_session_is_healthy

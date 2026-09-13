@@ -306,6 +306,23 @@ test_away_reentry_refuses_pending_return_gate() {
   pass "away-mode re-entry fails closed while the prior return catch-up is pending"
 }
 
+test_return_is_mode_agnostic_for_quiet_mode() {
+  # kunchenguid/firstmate#2356's /quiet off calls this exact script, unchanged
+  # - it must behave identically whether state/.afk declares "away" or
+  # "quiet", since return_guard/return_reconcile only ever test presence.
+  local dir out
+  dir="$TMP_ROOT/quiet-mode-return"
+  install_runner "$dir"
+  printf 'quiet\n%s\n' "$(date +%s)" > "$dir/home/state/.afk"
+  : > "$dir/home/state/.fake-drain"
+
+  out=$(run_return "$dir" begin) || fail "return did not succeed cleanly against a quiet-mode flag: $out"
+  assert_contains "$out" 'catch-up clear' "quiet-mode return did not announce ordinary work may proceed"
+  [ ! -e "$dir/home/state/.afk" ] || fail "quiet-mode return left the mode flag behind"
+  [ "$(wc -l < "$dir/home/stop.log" | tr -d ' ')" -eq 1 ] || fail "quiet-mode return did not stop the daemon exactly once"
+  pass "/quiet off's return path behaves identically for a quiet-content flag as for a legacy away-content one"
+}
+
 test_check_retries_recorded_terminal_teardown() {
   local dir gate out rc
   dir="$TMP_ROOT/terminal-teardown"
@@ -754,6 +771,7 @@ test_explicit_reclassification_requires_durable_reason
 test_captain_decision_does_not_masquerade_as_firstmate_blocker
 test_evidence_publication_failure_preserves_wake_for_redrain
 test_away_reentry_refuses_pending_return_gate
+test_return_is_mode_agnostic_for_quiet_mode
 test_check_retries_recorded_terminal_teardown
 test_unreadable_superseded_archive_keeps_return_gated
 test_missing_final_archive_keeps_retained_contract_gated
