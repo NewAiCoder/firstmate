@@ -197,10 +197,12 @@ FM_TOOLS_KNOWN="browser context7 mockup lavish none"
 
 fm_brief_tools() {  # <brief-file>
     local body line word out=''
+    local -a words=()
     body=$(fm_brief_task_heading_body "$1" "## Firstmate spec") || return 0
     line=$(printf '%s\n' "$body" | sed -n 's/^[[:space:]]*tools:[[:space:]]*//p' | head -1)
     [ -n "$line" ] || return 0
-    for word in $line; do
+    read -ra words <<< "$line"
+    for word in "${words[@]}"; do
         case " $FM_TOOLS_KNOWN " in
             *" $word "*) [ "$word" = none ] || out="$out${out:+ }$word" ;;
             *) echo "warning: unrecognized tools: entry '$word' ignored" >&2 ;;
