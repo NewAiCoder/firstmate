@@ -1753,6 +1753,52 @@ test_registered_clone_run_is_authoritative() {
   pass "a registered clone's run is authoritative over the worker's paused: line"
 }
 
+# The exact branch #602 exercises: `axi status` binds via the registered clone
+# (nm_run_head_matches_worktree already reads NM_WT) and answers with a
+# TERMINAL run for this branch, so the live-over-terminal recovery lookup
+# (fm_nm_runs_status_for_worktree, right below it) must also consult the
+# clone, not the task worktree, for a live successor. The clone is a
+# throwaway checkout (bin/fm-nm-watch.sh register-clone) that holds commits
+# the task worktree never receives, so passing the task worktree here can
+# never resolve either the corpse's or the live successor's sha and silently
+# keeps reporting the stale terminal answer instead of recognizing the live
+# run that replaced it.
+test_registered_clone_live_successor_outranks_terminal_run() {
+  reset_fakes
+  local d corpse_head live_head short_corpse short_live out
+  d=$(new_case registered-clone-live-successor)
+  make_repo_on_branch "$d/wt" fm/feat-clonelive
+  git clone -q "$d/wt" "$d/clone"
+  git -C "$d/clone" commit -q --allow-empty -m "fix round: corpse run's head"
+  corpse_head=$(git -C "$d/clone" rev-parse HEAD)
+  git -C "$d/clone" commit -q --allow-empty -m "fix round: live successor advanced the tip"
+  live_head=$(git -C "$d/clone" rev-parse HEAD)
+  # The clone's ref lags the live successor by one commit, mirroring the
+  # crash: the daemon recorded the corpse's run, then the live successor
+  # advanced past it in the same object store before the ref caught up.
+  git -C "$d/clone" reset -q --hard "$corpse_head"
+  short_corpse=$(git -C "$d/clone" rev-parse --short=7 "$corpse_head")
+  short_live=$(git -C "$d/clone" rev-parse --short=7 "$live_head")
+  # The task worktree never receives either commit - that is the whole reason
+  # register-clone exists - so a lookup against it could never resolve either
+  # sha and would silently keep the stale terminal answer.
+  git -C "$d/wt" rev-parse --verify --quiet "${short_corpse}^{commit}" >/dev/null 2>&1 \
+    && fail "the task worktree must not have the clone-only corpse commit"
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-clonelive.meta" "window=fm:fm-feat-clonelive" "worktree=$d/wt" "kind=ship" "harness=claude" "nm_clone=$d/clone"
+  FM_FAKE_RUN_HEAD="$corpse_head"
+  FM_FAKE_AXI_STATUS="$(run_failed fm/feat-clonelive)"
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  failed     fm/feat-clonelive ${short_corpse}  2026-09-05 11:20
+  running    fm/feat-clonelive ${short_live}  2026-09-05 10:05
+EOF
+)"
+  out=$(run_crew_state "$d" feat-clonelive)
+  assert_contains "$out" "state: working" "the clone's live successor outranks the terminal run bound to the clone"
+  assert_not_contains "$out" "state: failed" "a corpse at the clone's exact commit must not report a healthy task as failed"
+  pass "a registered clone's live successor outranks its own terminal run, never falling back to the task worktree"
+}
+
 test_no_run_idle_pane_custom_paused_verb() {
   reset_fakes
   local d; d=$(new_case custom-paused)
@@ -2619,5 +2665,6 @@ test_no_run_herdr_stale_registration_over_shell_reads_agent_gone
 test_no_run_herdr_stale_working_record_is_never_busy
 test_no_run_nm_claim_pause_reports_unknown
 test_registered_clone_run_is_authoritative
+test_registered_clone_live_successor_outranks_terminal_run
 
 echo "all fm-crew-state tests passed"
