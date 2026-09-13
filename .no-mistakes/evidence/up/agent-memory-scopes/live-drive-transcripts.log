@@ -1,0 +1,64 @@
+Live product drives for "feat(bin): launch crewmates inside memory-bounded systemd scopes"
+(target 58595a47d2b2e52d906804160888207bef8e6209)
+Host: this run's JLAP worktree, real systemd --user session, real systemd-run/systemctl.
+
+=== 1. tests/fm-agent-memory-scope-live.test.sh (full run, unmodified) ===
+Drives the real fm_agent_memory_compose_launch wrapper against the REAL systemd --user
+manager: launches a real `sleep 3` inside a real systemd-run --user --scope, waits for
+ActiveState=active, then reads back live MemoryCurrent via fm_agent_memory_current.
+
+Running as unit: fm-live-guard-84435.scope; invocation ID: 834b187ffb8a4aaa91e891b1dfa0dfae
+ok - the real systemd-run --user --scope wrapper launches a trivial sleep and fm_agent_memory_current reads back its live MemoryCurrent (466944 bytes, unit fm-live-guard-84435.scope)
+# fm-agent-memory-scope-live.test.sh: all assertions passed
+
+=== 2. tests/fm-agent-memory-spawn.test.sh (full run, unmodified) ===
+Drives the real bin/fm-spawn.sh against a fake tmux pane, exercising both the
+not-available (forced non-Linux) and available (this host's real systemd --user)
+branches.
+
+ok - the launch stays bare (unwrapped) when fm_agent_memory_systemd_user_available is false
+ok - meta records no memory_scope= (or memory_high=/memory_max=/memory_swap_max=) on the not-available branch
+ok - the launch is wrapped in systemd-run --user --scope --slice=firstmate-agents.slice --unit=fm-<id>-<gen>.scope when systemd --user is available
+ok - meta records memory_scope=/memory_high=/memory_max=/memory_swap_max= matching the launch's unit and configured defaults
+# fm-agent-memory-spawn.test.sh: all assertions passed
+
+=== 3. tests/fm-watch-triage.test.sh: test_nonterminal_stale_oom_retried_on_repeat_poll ===
+(isolated by sourcing the file's function definitions and invoking only this new test,
+since the full 4996-line file is a large pre-existing suite far beyond this change's scope)
+Drives two real bin/fm-watch.sh subprocesses against the same state dir: phase 1 sees the
+worker still alive (no OOM report); phase 2 sees the same pane hash but a now-dead
+foreground process backed by a Result=oom-kill scope, and must append the failed: line on
+that repeat poll.
+
+ok - a same-hash repeat poll retries the OOM check after the worker is killed post-first-sighting
+
+=== 4. Manual live drive: fm-crew-state.sh reports live per-worker memory usage ===
+No existing test exercises bin/fm-crew-state.sh's new MEMORY_SCOPE-reading / "memory: <X>"
+appending logic (tests/fm-crew-state.test.sh has zero references to memory_scope). Manually
+drove the real binary against a real, currently-running systemd --user scope.
+
+Running as unit: fm-manuallive-523564.scope; invocation ID: f1e41bd7c15f4df1ba085bad476eaa59
+scope active state: active
+fm-crew-state.sh output: state: unknown · source: pane · harness state unavailable (unknown missing) · memory: 452.0K
+PASS: live memory line present
+
+=== 5. Manual live drive: fm-crew-state.sh names the per-worker memory limit on a dead worker ===
+Drove the real fm-crew-state.sh binary with a fake tmux (window authoritatively gone) and a
+fake systemctl whose Result query answers oom-kill (standing in only for the kernel's OOM
+verdict, which cannot safely be induced in this sandbox - the same technique the project's
+own tests/fm-watch-triage.test.sh addition uses for the identical reason).
+
+fm-crew-state.sh output: state: unknown · source: none · backend target gone: fm:fm-feat-deadoom (killed by the per-worker memory limit: MemoryMax=6G)
+PASS: OOM detail surfaced in the gone-backend report
+
+=== 6. Manual live drive (adversarial): slice-wide configuration failure must not block a spawn ===
+Drove the real bin/fm-spawn.sh with this host's real systemd --user session, but a
+systemctl wrapper that fails only the "--user set-property" call (fm_agent_memory_slice_
+configure's fleet-wide slice write), leaving every other systemctl call real.
+
+warning: could not configure firstmate-agents.slice fleet-wide memory limits; continuing with per-worker limits only
+spawned slicefail-z1 harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-slicefail-z1 worktree=.../wt
+captured launch: systemd-run --user --scope --slice='firstmate-agents.slice' --unit='fm-slicefail-z1-s....scope' -p MemoryHigh='3G' -p MemoryMax='6G' -p MemorySwapMax='2G' -- bash -c '...'
+PASS: spawn succeeded despite slice-configure failure
+PASS: launch still wrapped in systemd-run (per-worker limits applied)
+PASS: best-effort warning printed
