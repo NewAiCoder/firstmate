@@ -479,7 +479,7 @@ test_primary_update_rebinds_local_watch() {
   local w before_hash after_hash out spec
   w=$(new_world t12)
   mkdir -p "$w/seed/bin"
-  printf '#!/usr/bin/env bash\necho v1 >> "$1"\n' > "$w/seed/bin/watched-action.sh"
+  printf "#!/usr/bin/env bash\necho v1 >> \"\$1\"\n" > "$w/seed/bin/watched-action.sh"
   chmod +x "$w/seed/bin/watched-action.sh"
   git -C "$w/seed" add -A
   git -C "$w/seed" commit -qm add-watched-action
@@ -492,7 +492,7 @@ test_primary_update_rebinds_local_watch() {
   spec="$w/home/state/when/when-rebind-primary.spec"
   before_hash=$(grep '^action_sha256=' "$spec")
 
-  printf '#!/usr/bin/env bash\necho v2 >> "$1"\n' > "$w/seed/bin/watched-action.sh"
+  printf "#!/usr/bin/env bash\necho v2 >> \"\$1\"\n" > "$w/seed/bin/watched-action.sh"
   git -C "$w/seed" add -A
   git -C "$w/seed" commit -qm bump-watched-action
   git -C "$w/seed" push -q origin main

@@ -442,7 +442,7 @@ SH
 chmod +x "$IN_REPO_ACT"
 NEW_HASH=$(fm_pr_sha256 "$IN_REPO_ACT")
 [ "$OLD_IN_REPO_SHA" != "$NEW_HASH" ] || fail "test fixture error: mutation did not change the in-repo action's hash"
-printf '#!/usr/bin/env bash\necho v2 >> "$1"\n' > "$OUT_OF_REPO_ACT"
+printf "#!/usr/bin/env bash\necho v2 >> \"\$1\"\n" > "$OUT_OF_REPO_ACT"
 chmod +x "$OUT_OF_REPO_ACT"
 
 OLD_TRUST_OUT=$(cat "$TRUST_OUT")
