@@ -953,6 +953,7 @@ The condition compares a PROJECTION of `no-mistakes axi status` (`status`, `outc
 A missing key contributes an empty field, so a no-mistakes release that renames a key degrades the watch to a coarser one rather than to a wrong one.
 The first poll after arming writes the snapshot and returns false, so arming never fires on its own baseline.
 A probe that errors exits 2 and is counted against the source's error budget; it is never read as a true.
+A watched clone or worktree with no no-mistakes run yet is not an error: the condition reads it as a sentinel projection distinct from any real run state, so it is a clean false on every poll (never burning the error budget) and still fires the moment a real run appears.
 It is also armed with `--edge`, because the condition rewrites its own snapshot to the current projection on every poll, true or false, so it is already edge-detecting and can never report the same transition twice; without `--edge`, the generic repeat dedup that requires an observed false between fires could discard a real transition observed by the fresh poller a reconcile restarts between fires, stalling the watch on a state the pipeline has already left.
 
 `bin/fm-nm-watch.sh` owns arming: `bin/fm-spawn.sh` calls it on every spawn and relaunch, it retires any existing watch first so a relaunch converges, and `bin/fm-teardown.sh` retires it.
