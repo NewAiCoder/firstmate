@@ -77,8 +77,11 @@
 # the record is archived.
 # The authority read and synchronous forge command share the away record's
 # cross-subsystem lock, which bin/fm-afk-contract.sh owns, closing the common
-# live-owner TOCTOU; failure to take it refuses before the forge call. Async and
-# queued paths are refused while away. Two confused-agent-grade limitations are
+# live-owner TOCTOU; failure to take it refuses before the forge call. Async
+# paths are refused while away. A GitHub merge while away also needs the base
+# branch's rules to prove no merge queue, unless the task is in the record's
+# merge-grant list; yolo=on alone does not skip that proof, see
+# refuse_github_queue_while_away. Two confused-agent-grade limitations are
 # accepted rather than hidden: queue or base changes after GitHub's preflight can
 # still enqueue, and killing this shell can orphan a forge child after stale-lock
 # recovery. docs/architecture.md owns those away-merge limits, while
@@ -945,8 +948,19 @@ persist_accepted_merge_authority() {
   return 1
 }
 
+# While away, a merge normally proceeds only when the base branch's rules prove
+# no merge queue, because a queued merge can land after its away authority
+# lapses. A task named in the current away record's merge-grant list skips that
+# proof: the grant is the captain's own per-task decision to let this merge run
+# unattended, including when the queue state cannot be read (for example a
+# private repository whose plan does not expose branch rules). A standing
+# yolo=on posture does not qualify, because it is a project setting rather than
+# a decision the captain made for this merge, so it still needs a provably
+# clear queue. The grant skips only this proof; the merge stays synchronous
+# (--auto is refused earlier) and every other gate still applies.
 refuse_github_queue_while_away() {
   [ "$FM_PR_AWAY_POSTURE" = true ] || return 0
+  [ "$FM_PR_MERGE_AUTHORITY" = away-grant ] && return 0
   # Accepted confused-agent-grade limitation, as in bin/fm-lease-lib.sh, not an
   # oversight: a queue rule or PR base change after this preflight can still
   # enqueue the merge, which can land after its away grant lapses.
