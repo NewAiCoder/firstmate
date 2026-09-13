@@ -469,4 +469,34 @@ assert_grep 'status: fired' "$RESULT" "the rebound watch fires instead of being 
 assert_grep 'action ran v2 against' "$RESULT" "the fired action ran the new bytes, not a stale copy"
 pass "rebind-all refreshes an in-repo watch's trust binding after a self-update and leaves an out-of-repo one alone"
 
+# --- rebind-all matches an action reached through a symlinked FM_ROOT -------
+H="$TMP_ROOT/h-rebind-symlink"; new_home "$H"
+REPO_REAL="$TMP_ROOT/rebind-symlink-real"
+mkdir -p "$REPO_REAL/bin"
+REPO_LINK="$TMP_ROOT/rebind-symlink-link"
+ln -s "$REPO_REAL" "$REPO_LINK"
+SYMLINK_ACT="$REPO_LINK/bin/act.sh"
+cat > "$REPO_REAL/bin/act.sh" <<'SH'
+#!/usr/bin/env bash
+log=$1
+echo v1 >> "$log"
+SH
+chmod +x "$REPO_REAL/bin/act.sh"
+when_symlink_ro() { FM_HOME="$1" FM_ROOT_OVERRIDE="$REPO_LINK" "$ROOT/bin/fm-procevent-when.sh" "${@:2}"; }
+
+when_symlink_ro "$H" arm rebind-symlink --interval 0.1 --stable 1 \
+  --condition true --action "$SYMLINK_ACT" "$TMP_ROOT/rebind-symlink.log" >/dev/null
+
+cat > "$REPO_REAL/bin/act.sh" <<'SH'
+#!/usr/bin/env bash
+log=$1
+echo v2 >> "$log"
+SH
+chmod +x "$REPO_REAL/bin/act.sh"
+
+OUT=$(when_symlink_ro "$H" rebind-all) || fail "rebind-all reported a failure through a symlinked FM_ROOT: $OUT"
+assert_contains "$OUT" "rebound: when-rebind-symlink" \
+  "rebind-all must rebind an action reached through a symlinked FM_ROOT, not report it out of scope"
+pass "rebind-all matches FM_ROOT through a symlinked checkout path"
+
 printf 'all fm-procevent-when tests passed\n'
