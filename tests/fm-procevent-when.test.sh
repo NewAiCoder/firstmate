@@ -17,6 +17,8 @@ set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP_ROOT=$(fm_test_tmproot fm-procevent-when-tests)
 export FM_PROCEVENT_CLAIM_ROOT="$TMP_ROOT/claims"
+# shellcheck source=bin/fm-pr-lib.sh
+. "$ROOT/bin/fm-pr-lib.sh"
 
 pe()   { FM_HOME="$1" "$ROOT/bin/fm-procevent.sh" "${@:2}"; }
 when() { FM_HOME="$1" "$ROOT/bin/fm-procevent-when.sh" "${@:2}"; }
@@ -551,5 +553,82 @@ assert_grep 'repeat: continues' "$RESULT" "the spawn-shaped watch keeps watching
 assert_present "$H/state/$RING_TASK.inbox" "the ring landed in the task's steering inbox"
 when "$H" retire "nm-state-$RING_TASK" >/dev/null
 pass "the watch shape fm-spawn arms rings a task and keeps watching"
+
+# --- rebind-all refreshes a watch's action hash after a self-update ----------
+# A self-update fast-forwards bin/ in place, changing an in-repo action
+# executable's bytes with no tampering involved. Without rebind-all the next
+# fire is refused as "does not match the registered trust binding" (see the
+# mutated-action-bytes case above); rebind-all exists to follow that update
+# and republish a trust binding that matches the new bytes, but only for an
+# action living under the simulated repo root, never for one outside it.
+H="$TMP_ROOT/h-rebind"; new_home "$H"
+REPO_ROOT="$TMP_ROOT/rebind-repo"
+mkdir -p "$REPO_ROOT/bin"
+IN_REPO_ACT="$REPO_ROOT/bin/act.sh"
+cat > "$IN_REPO_ACT" <<'SH'
+#!/usr/bin/env bash
+log=$1
+echo v1 >> "$log"
+SH
+chmod +x "$IN_REPO_ACT"
+OUT_OF_REPO_ACT="$TMP_ROOT/rebind-outside-act.sh"
+cat > "$OUT_OF_REPO_ACT" <<'SH'
+#!/usr/bin/env bash
+log=$1
+echo v1 >> "$log"
+SH
+chmod +x "$OUT_OF_REPO_ACT"
+when_ro() { FM_HOME="$1" FM_ROOT_OVERRIDE="$REPO_ROOT" "$ROOT/bin/fm-procevent-when.sh" "${@:2}"; }
+
+when_ro "$H" arm rebind-in-repo --interval 0.1 --stable 1 \
+  --condition true --action "$IN_REPO_ACT" "$TMP_ROOT/rebind-in-repo.log" >/dev/null
+when_ro "$H" arm rebind-out-of-repo --interval 0.1 --stable 1 \
+  --condition true --action "$OUT_OF_REPO_ACT" "$TMP_ROOT/rebind-out-of-repo.log" >/dev/null
+
+SPEC_IN="$H/state/when/when-rebind-in-repo.spec"
+TRUST_IN="$H/state/when/when-rebind-in-repo.trust"
+TRUST_OUT="$H/state/when/when-rebind-out-of-repo.trust"
+
+OUT=$(when_ro "$H" rebind-all) || fail "rebind-all failed with nothing to rebind: $OUT"
+assert_contains "$OUT" "0 rebound, 2 unchanged or out of scope, 0 failed" \
+  "rebind-all should be a no-op before any action bytes change"
+
+# Simulate the self-update: rewrite both action scripts' bytes in place.
+OLD_IN_REPO_SHA=$(fm_pr_sha256 "$IN_REPO_ACT")
+cat > "$IN_REPO_ACT" <<'SH'
+#!/usr/bin/env bash
+log=$1
+echo v2 >> "$log"
+echo "action ran v2 against $log"
+SH
+chmod +x "$IN_REPO_ACT"
+NEW_HASH=$(fm_pr_sha256 "$IN_REPO_ACT")
+[ "$OLD_IN_REPO_SHA" != "$NEW_HASH" ] || fail "test fixture error: mutation did not change the in-repo action's hash"
+printf '#!/usr/bin/env bash\necho v2 >> "$1"\n' > "$OUT_OF_REPO_ACT"
+chmod +x "$OUT_OF_REPO_ACT"
+
+OLD_TRUST_OUT=$(cat "$TRUST_OUT")
+OUT=$(when_ro "$H" rebind-all) || fail "rebind-all reported a failure: $OUT"
+assert_contains "$OUT" "rebound: when-rebind-in-repo" "the in-repo watch was rebound"
+assert_contains "$OUT" "1 rebound, 1 unchanged or out of scope, 0 failed" \
+  "exactly the in-repo watch should rebind; the out-of-repo one stays out of scope"
+[ "$(cat "$TRUST_OUT")" = "$OLD_TRUST_OUT" ] \
+  || fail "rebind-all must never touch a watch whose action lives outside FM_ROOT"
+
+grep -qx "action_sha256=$NEW_HASH" "$SPEC_IN" \
+  || fail "rebind-all did not record the action's current bytes in the spec"
+SPEC_HASH=$(fm_pr_sha256 "$SPEC_IN")
+TRUST_WANT=$(sed -n '2p' "$TRUST_IN")
+[ "$SPEC_HASH" = "$TRUST_WANT" ] \
+  || fail "the republished spec must still match its own trust binding"
+
+# The watch actually works again: a fresh run fires cleanly against the new
+# bytes instead of being rejected.
+pe "$H" reconcile >/dev/null
+wait_for_result "$H" "when-rebind-in-repo" || fail "the rebound watch captured no outcome"
+RESULT=$(first_result "$H" "when-rebind-in-repo")
+assert_grep 'status: fired' "$RESULT" "the rebound watch fires instead of being rejected"
+assert_grep 'action ran v2 against' "$RESULT" "the fired action ran the new bytes, not a stale copy"
+pass "rebind-all refreshes an in-repo watch's trust binding after a self-update and leaves an out-of-repo one alone"
 
 printf 'all fm-procevent-when tests passed\n'
