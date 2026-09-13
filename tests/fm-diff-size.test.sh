@@ -126,4 +126,50 @@ print(c.execute('SELECT 1 FROM lanes WHERE pr_url=?', (sys.argv[2],)).fetchone()
 " "$DB" "https://github.com/o/r/pull/10")
 say "a base with no common history records no lane row" "None" "$GOT"
 
+# fm-diff-size-check.sh is the worker-facing entry point (Rule 8): it must
+# resolve the same base branch the rest of the fleet does (fm_default_branch:
+# origin/HEAD, then local main, then local master) instead of falling back to
+# a bare HEAD, which would silently diff HEAD against itself and always
+# report zero changed lines for a real lane.
+MASTER_WT="$TMP/master-wt"
+mkdir -p "$MASTER_WT"
+git -C "$MASTER_WT" init -q -b master
+git -C "$MASTER_WT" config user.email t@t
+git -C "$MASTER_WT" config user.name t
+printf 'a\n' > "$MASTER_WT/base.txt"
+git -C "$MASTER_WT" add base.txt
+git -C "$MASTER_WT" commit -q -m base
+
+git -C "$MASTER_WT" checkout -q -b lane
+seq 1 50 > "$MASTER_WT/one.txt"
+git -C "$MASTER_WT" add one.txt
+git -C "$MASTER_WT" commit -q -m lane
+
+OUT=$(bash "$ROOT/bin/fm-diff-size-check.sh" "$MASTER_WT")
+say "diff-size-check falls back to local master, no origin" \
+    "50 changed lines across 1 files: ok" "$OUT"
+
+# No origin/HEAD, no local main, no local master: the base branch genuinely
+# cannot be resolved, so the check must say so rather than fabricate a
+# zero-line "ok" by diffing HEAD against itself.
+NOBASE_WT="$TMP/nobase-wt"
+mkdir -p "$NOBASE_WT"
+git -C "$NOBASE_WT" init -q -b trunk
+git -C "$NOBASE_WT" config user.email t@t
+git -C "$NOBASE_WT" config user.name t
+printf 'a\n' > "$NOBASE_WT/base.txt"
+git -C "$NOBASE_WT" add base.txt
+git -C "$NOBASE_WT" commit -q -m base
+
+git -C "$NOBASE_WT" checkout -q -b lane
+seq 1 50 > "$NOBASE_WT/one.txt"
+git -C "$NOBASE_WT" add one.txt
+git -C "$NOBASE_WT" commit -q -m lane
+
+OUT=$(bash "$ROOT/bin/fm-diff-size-check.sh" "$NOBASE_WT")
+RC=$?
+say "diff-size-check reports unresolved base rather than a fake zero" \
+    "cannot measure: no default branch found (checked origin/HEAD, main, master)" "$OUT"
+say "diff-size-check still exits 0 with no resolvable base" "0" "$RC"
+
 exit "$FAIL"

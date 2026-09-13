@@ -35,7 +35,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-brief.sh`            | Scaffold ship (explicit `--mode`), scout, secondmate-charter, and Herdr-lab briefs, with Captain's intent and Firstmate spec subsections on ship/scout |
 | [`fm-dod-lib.sh`](../bin/fm-dod-lib.sh) | Own ship/scout worker role scope, ship definitions of done, and the no-mistakes `--intent` contract |
 | `fm-diff-size-lib.sh`    | One owner of the lane-size target (400 changed lines) and cap (800) thresholds and their verdicts |
-| `fm-diff-size-check.sh`  | Worker-facing pre-run lane-size measurement; always exits 0 and prints an `ok`/`over-target`/`over-cap` verdict |
+| `fm-diff-size-check.sh`  | Worker-facing pre-run lane-size measurement; resolves the base branch via `fm_default_branch` (origin/HEAD, then local main/master); always exits 0 and prints an `ok`/`over-target`/`over-cap` verdict, or a "cannot measure" line if no base branch resolves |
 | `fm-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |
 | `fm-herdr-lab-viewer.py` | The pty engine behind `fm-herdr-lab.sh viewer`: one real foreground Herdr client on a non-zero window grid |
 | `fm-install-herdr.sh`    | Install CI's exact-version Herdr pin with official asset URL, SHA-256, and protocol checks |
