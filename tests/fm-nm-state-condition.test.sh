@@ -81,6 +81,19 @@ chmod +x "$TMP/bin/no-mistakes"
 NM_STUB_OUT="$TMP/a.toon" bash "$SCRIPT" "$TMP/wt" "$NOINIT_SNAP"
 check "a run finally appearing after a no-run wait fires" 0 "$?"
 
+# The real no-mistakes CLI writes its "repo not initialized" error to
+# stderr, not stdout (matching bin/fm-teardown.sh's own axi status
+# error-text read). The condition script must merge streams to see it.
+STDERR_SNAP="$TMP/stderr-snap"
+cat > "$TMP/bin/no-mistakes" <<'STUB'
+#!/usr/bin/env bash
+cat "$NM_STUB_OUT" >&2
+exit 1
+STUB
+chmod +x "$TMP/bin/no-mistakes"
+NM_STUB_OUT="$TMP/noinit.toon" bash "$SCRIPT" "$TMP/wt" "$STDERR_SNAP"
+check "no run yet is a clean false when the CLI writes the error to stderr" 1 "$?"
+
 bash "$SCRIPT" --projection "$TMP/wt" >/dev/null 2>&1
 echo "ok - projection mode runs"
 

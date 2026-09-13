@@ -41,7 +41,7 @@ NO_RUN_PROJECTION="no-run"
 
 projection() {  # <worktree>
     local wt=$1 out rc key value line=''
-    out=$(fm_nm_run_bounded "$wt" "$PROBE_TIMEOUT" axi status 2>/dev/null)
+    out=$(fm_nm_run_bounded "$wt" "$PROBE_TIMEOUT" axi status 2>&1)
     rc=$?
     if [ "$rc" -ne 0 ]; then
         case "$out" in
