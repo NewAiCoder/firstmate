@@ -7,8 +7,9 @@
 #      carries no AGY_* variable; AGENT=1 there is inherited launcher state),
 #      so detection is ancestry alone on the anchored process name `agy`.
 #   2. The anchored match must never claim unrelated commands containing the
-#      fragment, and an inherited CLAUDECODE still outranks ancestry until the
-#      spawn clears it - the clearing is load-bearing, not cosmetic.
+#      fragment, and a structural agy ancestor now outranks a retained or
+#      inherited CLAUDECODE - tests/fm-harness-precedence.test.sh owns the
+#      general boundary.
 #   3. The launch carries the brief via --prompt-interactive with --model,
 #      --effort, and --dangerously-skip-permissions; a requested model a
 #      reachable `agy models` omits refuses loudly instead of wedging a pane,
@@ -118,19 +119,29 @@ SH
 }
 
 test_agy_claims_no_inherited_launcher_marker() {
-  local out
+  local fakebin out
   # AGENT=1 was observed on a live agy TUI as inherited launcher state, so it
   # must never promote to an agy identity the way GEMINI_CLI does for gemini.
   out=$(AGENT=1 "$HARNESS")
   [ "$out" != agy ] \
     || fail "an inherited AGENT=1 must never claim the agy identity, got '$out'"
   # Drive the hazard the other way: agy does not clear an inherited CLAUDECODE,
-  # so the marker still wins over a real agy ancestor until the spawn clears it
-  # at the launch boundary. Pin both halves so neither can rot silently.
-  out=$(CLAUDECODE=1 FAKE_PS_COMM=agy FAKE_PS_ARGS='agy --prompt-interactive hi' \
-    PATH="$(fm_fakebin "$TMP_ROOT/anc-claude"):$PATH" "$HARNESS")
-  [ "$out" = claude ] \
-    || fail "an inherited CLAUDECODE must still outrank agy ancestry, got '$out'"
+  # so a structural agy ancestor must still outrank the retained marker rather
+  # than being renamed away from it. Pin both halves so neither can rot
+  # silently.
+  fakebin=$(fm_fakebin "$TMP_ROOT/anc-claude")
+  cat > "$fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *"comm="*) printf '%s\n' agy; exit 0 ;;
+  *"args="*) printf '%s\n' 'agy --prompt-interactive hi'; exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/ps"
+  out=$(CLAUDECODE=1 PATH="$fakebin:$PATH" "$HARNESS")
+  [ "$out" = agy ] \
+    || fail "a structural agy ancestor must outrank an inherited CLAUDECODE, got '$out'"
   pass "fm-harness.sh: no inherited launcher marker claims the agy identity"
 }
 
