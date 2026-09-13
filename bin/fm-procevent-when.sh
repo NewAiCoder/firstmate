@@ -141,6 +141,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+FM_ROOT_REAL=$(cd "$FM_ROOT" 2>/dev/null && pwd -P) || FM_ROOT_REAL=$FM_ROOT
 
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
@@ -752,7 +753,7 @@ rebind_one() {
     return 1
   fi
   case "$action_path" in
-    "$FM_ROOT"/*) ;;
+    "$FM_ROOT_REAL"/*) ;;
     *) fm_procevent_source_lock_release "$sid"; return 2 ;;
   esac
   if ! action_hash=$(fm_pr_sha256 "$action_path"); then
