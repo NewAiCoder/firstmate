@@ -71,7 +71,7 @@ cmd_arm() {  # <task-id>
         --action "$SCRIPT_DIR/fm-send.sh" "$id" \
           "no-mistakes state changed: run \`no-mistakes axi status\` where your run executes, append \`resolved: run returned\`, and answer the parked gate." \
         2>&1 >/dev/null); then
-      echo "armed: when-nm-state-$id (pipeline-state watch on $dir)"
+      echo "armed: when-nm-state-$id (pipeline-state watch) on $dir"
       return 0
     fi
     err=$(printf '%s\n' "$err" | tail -1)
