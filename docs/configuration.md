@@ -1096,6 +1096,7 @@ The condition compares a PROJECTION of `no-mistakes axi status` (`status`, `outc
 A missing key contributes an empty field, so a no-mistakes release that renames a key degrades the watch to a coarser one rather than to a wrong one.
 The first poll after arming writes the snapshot and returns false, so arming never fires on its own baseline.
 A probe that errors exits 2 and is counted against the source's error budget; it is never read as a true.
+A worktree with no no-mistakes run yet (no `init`, or no run submitted there) is not an error: the probe reads it as a clean false on every poll instead of spending the error budget, and still fires the moment a real run appears.
 
 `bin/fm-nm-watch.sh` owns arming: `bin/fm-spawn.sh` calls it on every spawn and relaunch, it retires any existing watch first so a relaunch converges, and `bin/fm-teardown.sh` retires it.
 A failed arm never fails the spawn, but it queues a durable `check` wake naming the task, because a worker without its watch is never rung.
