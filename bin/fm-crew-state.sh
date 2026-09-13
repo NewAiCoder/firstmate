@@ -599,7 +599,7 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
       # displaces it: a terminal run with no live sibling keeps its full
       # `axi status` step and gate detail rather than degrading to the ledger.
       if ! fm_nm_run_is_active "$RUN_OUT"; then
-        live_status=$(fm_nm_runs_status_for_worktree "$WT" "$CREW_BRANCH" "$(nm_runs_list)")
+        live_status=$(fm_nm_runs_status_for_worktree "$NM_WT" "$CREW_BRANCH" "$(nm_runs_list)")
         if [ "$(fm_nm_run_status_class "$live_status")" = live ]; then
           COARSE_STATUS=$live_status
           RUN_SOURCE=coarse
