@@ -430,9 +430,15 @@ cmd_run() {
     exit 0
   fi
 
-  # Revalidate the registered action bytes immediately before claiming the
-  # fire. A changed or unavailable executable must never be run.
+  # Reload the trust binding from disk immediately before claiming the fire,
+  # rather than trusting the value cached at spec_load time when this poll
+  # loop started: a rebind-all can run (e.g. after a self-update) while this
+  # process is still polling, and only a fresh read sees its rebound hash.
   local current_action_hash
+  if ! spec_load "$sid"; then
+    emit_doc "$sid" rejected "refused without executing anything: $SPEC_ERROR" "$polls" '' ''
+    exit 0
+  fi
   current_action_hash=$(fm_pr_sha256 "${ACT_ARGV[0]}") || current_action_hash=
   if [ "$current_action_hash" != "$SPEC_ACTION_SHA256" ]; then
     emit_doc "$sid" rejected \

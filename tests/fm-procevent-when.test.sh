@@ -499,4 +499,58 @@ assert_contains "$OUT" "rebound: when-rebind-symlink" \
   "rebind-all must rebind an action reached through a symlinked FM_ROOT, not report it out of scope"
 pass "rebind-all matches FM_ROOT through a symlinked checkout path"
 
+# --- rebind-all reaches a watch whose poller is already running -------------
+# The self-update race the fire-time revalidation targets: `run` calls
+# spec_load once before entering its poll loop and caches the action hash in
+# memory for the rest of its life. If the self-update (and its rebind-all)
+# land while that poll loop is still running, only rewriting the on-disk spec
+# and trust is not enough - the fire-time check must re-read the binding from
+# disk, or the still-running poller compares against its stale in-memory hash
+# and rejects a perfectly legitimate post-update fire.
+H="$TMP_ROOT/h-live-rebind"; new_home "$H"
+REPO_ROOT="$TMP_ROOT/live-rebind-repo"
+mkdir -p "$REPO_ROOT/bin"
+LIVE_ACT="$REPO_ROOT/bin/act.sh"
+cat > "$LIVE_ACT" <<'SH'
+#!/usr/bin/env bash
+echo v1 >> "$1"
+echo "v1 ran against $1"
+SH
+chmod +x "$LIVE_ACT"
+LIVE_TRIGGER="$TMP_ROOT/live-rebind-trigger"
+LIVE_COUNTER="$TMP_ROOT/live-rebind-count"
+LIVE_LOG="$TMP_ROOT/live-rebind.log"
+when_live_ro() { FM_HOME="$1" FM_ROOT_OVERRIDE="$REPO_ROOT" "$ROOT/bin/fm-procevent-when.sh" "${@:2}"; }
+
+when_live_ro "$H" arm live-rebind --interval 0.1 --stable 1 \
+  --condition "$COND" "$LIVE_TRIGGER" "$LIVE_COUNTER" \
+  --action "$LIVE_ACT" "$LIVE_LOG" >/dev/null
+
+# Start the poller now, before the simulated self-update, so its one-time
+# spec_load caches the pre-update (v1) action hash in memory.
+pe "$H" reconcile >/dev/null
+wait_for_file "$LIVE_COUNTER" || fail "the live-rebind poller never evaluated its condition"
+
+# Simulate the self-update while that poller is still running: rewrite the
+# action's bytes in place, then rebind-all republishes the on-disk trust
+# binding to match. The already-running poller's in-memory hash is untouched.
+cat > "$LIVE_ACT" <<'SH'
+#!/usr/bin/env bash
+echo v2 >> "$1"
+echo "v2 ran against $1"
+SH
+chmod +x "$LIVE_ACT"
+OUT=$(when_live_ro "$H" rebind-all) || fail "rebind-all reported a failure during a live poll: $OUT"
+assert_contains "$OUT" "rebound: when-live-rebind" "the live watch's trust binding was rebound on disk"
+
+# Let the condition go true; the still-running poller must pick up the fresh
+# binding at fire time instead of comparing against its stale cached hash.
+: > "$LIVE_TRIGGER"
+wait_for_result "$H" when-live-rebind || fail "the live poller never captured an outcome after rebind-all"
+RESULT=$(first_result "$H" when-live-rebind)
+assert_grep 'status: fired' "$RESULT" \
+  "a watch whose poller was already running when rebind-all ran must still fire, not be rejected as stale"
+assert_grep 'v2 ran against' "$RESULT" "the fired action ran the post-update bytes, not the ones cached at poll start"
+pass "rebind-all reaches a watch whose run process was already polling when the self-update landed"
+
 printf 'all fm-procevent-when tests passed\n'
