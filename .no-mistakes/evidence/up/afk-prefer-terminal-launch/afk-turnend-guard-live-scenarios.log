@@ -1,0 +1,35 @@
+=== SCENARIO 1: dead away-mode daemon (recorded pid no longer exists) ===
+$ printf '{"stop_hook_active":false}' | CLAUDECODE=1 FM_HOME=<tmp-home> bash bin/fm-turnend-guard.sh
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  TURN WOULD END BLIND - SUPERVISION IS OFF
+●  1 task(s) in flight, but away-mode daemon pid gone (recorded lock does not name a live, identity-matched process) - relaunch with bin/fm-afk-launch.sh start (or start-native).
+●  Away mode owns watcher supervision; load /afk and ensure the daemon is running instead of starting normal supervision directly.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EXIT CODE: 2
+
+=== SCENARIO 2: live process, recorded identity does NOT match (recycled pid) ===
+$ printf '{"stop_hook_active":false}' | CLAUDECODE=1 FM_HOME=<tmp-home> bash bin/fm-turnend-guard.sh
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  TURN WOULD END BLIND - SUPERVISION IS OFF
+●  1 task(s) in flight, but away-mode daemon pid gone (recorded lock does not name a live, identity-matched process) - relaunch with bin/fm-afk-launch.sh start (or start-native).
+●  Away mode owns watcher supervision; load /afk and ensure the daemon is running instead of starting normal supervision directly.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EXIT CODE: 2
+
+=== SCENARIO 3: live, identity-matched daemon with a STALE beacon ===
+$ printf '{"stop_hook_active":false}' | CLAUDECODE=1 FM_HOME=<tmp-home> bash bin/fm-turnend-guard.sh
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  TURN WOULD END BLIND - SUPERVISION IS OFF
+●  1 task(s) in flight, but away-mode beacon stale (last beat: 211413863s ago) - the daemon still holds its lock but its watcher child has not ticked within 300s; inspect the daemon before relaunching.
+●  Away mode owns watcher supervision; load /afk and ensure the daemon is running instead of starting normal supervision directly.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EXIT CODE: 2
+
+=== SCENARIO 4: same live daemon-lock state, AWAY MODE OFF (no .afk) ===
+$ printf '{"stop_hook_active":false}' | CLAUDECODE=1 FM_HOME=<tmp-home> bash bin/fm-turnend-guard.sh
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  TURN WOULD END BLIND - SUPERVISION IS OFF
+●  1 task(s) in flight, but no live watcher holds this home lock (last beat: 0s ago).
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EXIT CODE: 2
