@@ -10,6 +10,7 @@
 #   fm-procevent-when.sh terminal <result-file>
 #   fm-procevent-when.sh source-id <name>
 #   fm-procevent-when.sh retire <name>
+#   fm-procevent-when.sh rebind-all
 #   fm-procevent-when.sh run <source-id>
 #
 # arm        Bind a (condition, action) pair as process-event source
@@ -49,6 +50,19 @@
 #            record, and fired marker. Idempotent. Captured results and their
 #            handled acknowledgements are never touched. Warns when the action
 #            had already fired without a captured outcome.
+# rebind-all Refresh the trust binding of every registered watch whose action
+#            executable lives under this repo (FM_ROOT), re-hashing it against
+#            its CURRENT on-disk bytes. A self-update fast-forwards bin/ in
+#            place, which changes those bytes with no tampering involved; left
+#            alone, the next fire is refused as not matching the registered
+#            trust binding, and the watch dies silently. rebind-all is meant to
+#            run right after such an update. It still validates each watch's
+#            existing spec and trust chain exactly as an ordinary fire would
+#            (a watch already broken for some other reason is reported, not
+#            silently patched over), and it never touches an action executable
+#            outside FM_ROOT: rebinding follows this repo's own tracked
+#            update, never an arbitrary swapped action. Idempotent: a watch
+#            whose action bytes already match its binding is left alone.
 # run        The blocking child the generic runner executes; never run it in a
 #            conversational turn. It polls the condition on the registered
 #            cadence, requires the stable count of consecutive trues, claims a
@@ -473,6 +487,110 @@ cmd_terminal() {
   [ "$(cmd_classify "$file")" != unknown ]
 }
 
+# --- rebind-all ---------------------------------------------------------------
+
+# publish_spec <sid> <device> <action_hash>: write and hash-bind a spec from
+# the SPEC_* scalars and COND_ARGV/ACT_ARGV a prior spec_load already
+# populated, using the given action hash. Mirrors cmd_arm's write block; the
+# only caller today is rebind_one, refreshing action_sha256 alone.
+publish_spec() {
+  local sid=$1 device=$2 action_hash=$3 tmp trust_tmp hash
+  tmp=$(umask 077; mktemp "$WHEN_DIR/.spec.XXXXXX") || return 1
+  {
+    printf 'fm-when-spec-v1\n'
+    printf 'armed=%s\n' "$SPEC_ARMED"
+    printf 'interval=%s\n' "$SPEC_INTERVAL"
+    printf 'stable=%s\n' "$SPEC_STABLE"
+    printf 'deadline=%s\n' "$SPEC_DEADLINE"
+    printf 'condition_timeout=%s\n' "$SPEC_CONDITION_TIMEOUT"
+    printf 'action_timeout=%s\n' "$SPEC_ACTION_TIMEOUT"
+    printf 'error_budget=%s\n' "$SPEC_ERROR_BUDGET"
+    printf 'action_sha256=%s\n' "$action_hash"
+    printf 'condition_argc=%s\n' "${#COND_ARGV[@]}"
+    printf 'action_argc=%s\n' "${#ACT_ARGV[@]}"
+    printf 'argv:\n'
+    printf '%s\n' "${COND_ARGV[@]}"
+    printf '%s\n' "${ACT_ARGV[@]}"
+  } > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  chmod 0600 "$tmp" || { rm -f -- "$tmp"; return 1; }
+  hash=$(fm_pr_sha256 "$tmp") || { rm -f -- "$tmp"; return 1; }
+  trust_tmp=$(umask 077; mktemp "$WHEN_DIR/.trust.XXXXXX") || { rm -f -- "$tmp"; return 1; }
+  printf 'fm-when-trust-v1\n%s\n' "$hash" > "$trust_tmp" || { rm -f -- "$tmp" "$trust_tmp"; return 1; }
+  chmod 0600 "$trust_tmp" || { rm -f -- "$tmp" "$trust_tmp"; return 1; }
+  mv -f -- "$tmp" "$(spec_file "$sid")" || { rm -f -- "$tmp" "$trust_tmp"; return 1; }
+  mv -f -- "$trust_tmp" "$(trust_file "$sid")" || { rm -f -- "$(spec_file "$sid")" "$trust_tmp"; return 1; }
+  if ! fm_pr_private_file_valid "$(spec_file "$sid")" 600 "$device" \
+    || ! fm_pr_private_file_valid "$(trust_file "$sid")" 600 "$device"; then
+    rm -f -- "$(spec_file "$sid")" "$(trust_file "$sid")"
+    return 1
+  fi
+}
+
+# rebind_one <source-id>: 0 = rebound, 1 = failed (reported to stderr), 2 =
+# unchanged or the action lives outside FM_ROOT (skipped, not an error).
+rebind_one() {
+  local sid=$1 action_path action_hash device
+  if ! fm_procevent_source_lock_acquire "$sid"; then
+    printf 'skip: %s (cannot lock)\n' "$sid" >&2
+    return 1
+  fi
+  if ! spec_load "$sid"; then
+    printf 'skip: %s (%s)\n' "$sid" "$SPEC_ERROR" >&2
+    fm_procevent_source_lock_release "$sid"
+    return 1
+  fi
+  if ! action_path=$(action_executable "${ACT_ARGV[0]}"); then
+    printf 'skip: %s (action executable is unavailable: %s)\n' "$sid" "${ACT_ARGV[0]}" >&2
+    fm_procevent_source_lock_release "$sid"
+    return 1
+  fi
+  case "$action_path" in
+    "$FM_ROOT"/*) ;;
+    *) fm_procevent_source_lock_release "$sid"; return 2 ;;
+  esac
+  if ! action_hash=$(fm_pr_sha256 "$action_path"); then
+    printf 'skip: %s (cannot hash the action executable)\n' "$sid" >&2
+    fm_procevent_source_lock_release "$sid"
+    return 1
+  fi
+  if [ "$action_hash" = "$SPEC_ACTION_SHA256" ]; then
+    fm_procevent_source_lock_release "$sid"
+    return 2
+  fi
+  if ! device=$(fm_pr_file_device "$WHEN_DIR"); then
+    printf 'skip: %s (cannot inspect the watch directory)\n' "$sid" >&2
+    fm_procevent_source_lock_release "$sid"
+    return 1
+  fi
+  if ! publish_spec "$sid" "$device" "$action_hash"; then
+    printf 'skip: %s (could not publish the refreshed trust binding)\n' "$sid" >&2
+    fm_procevent_source_lock_release "$sid"
+    return 1
+  fi
+  fm_procevent_source_lock_release "$sid"
+  printf 'rebound: %s\n' "$sid"
+  return 0
+}
+
+cmd_rebind_all() {
+  [ "$#" -eq 0 ] || usage
+  local spec sid rebound=0 skipped=0 failed=0 rc
+  [ -d "$WHEN_DIR" ] || { printf 'no watches registered\n'; return 0; }
+  for spec in "$WHEN_DIR"/when-*.spec; do
+    [ -e "$spec" ] || continue
+    sid=$(basename "$spec" .spec)
+    rebind_one "$sid"
+    rc=$?
+    case "$rc" in
+      0) rebound=$((rebound + 1)) ;;
+      2) skipped=$((skipped + 1)) ;;
+      *) failed=$((failed + 1)) ;;
+    esac
+  done
+  printf 'rebind-all: %s rebound, %s unchanged or out of scope, %s failed\n' "$rebound" "$skipped" "$failed"
+  [ "$failed" -eq 0 ]
+}
+
 # --- retire ------------------------------------------------------------------
 
 cmd_retire() {
@@ -499,6 +617,7 @@ case "${1-}" in
   terminal)  shift; cmd_terminal "$@" ;;
   source-id) shift; cmd_source_id "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
+  rebind-all) shift; cmd_rebind_all "$@" ;;
   ''|-h|--help|help) usage ;;
   *) die "unknown command: $1" ;;
 esac
