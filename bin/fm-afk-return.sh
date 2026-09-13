@@ -315,7 +315,18 @@ health_snapshot() {  # <evidence-file>
   local evidence=$1 beat_age lines=""
   beat_age=$(fm_path_age "$STATE/.last-watcher-beat")
   if [ -e "$STATE/.watcher-down" ]; then
-    lines="GAP: watcher downtime was detected during the away window (recovery marker present)"
+    # The marker survives past its episode in an acked:* state
+    # (fm-wake-lib.sh _fm_recovery_marker_ack); only pending:* and
+    # announced:* mean the downtime is still open. A marker this read
+    # cannot parse is treated the same as an open gap, conservatively.
+    if fm_recovery_marker_snapshot "$STATE/.watcher-down"; then
+      case "$FM_RECOVERY_MARKER_TOKEN" in
+        acked:*) : ;;
+        *) lines="GAP: watcher downtime was detected during the away window (recovery marker present)" ;;
+      esac
+    else
+      lines="GAP: watcher downtime was detected during the away window (recovery marker present)"
+    fi
   fi
   if [ -e "$STATE/.afk" ] && ! fm_afk_daemon_owns_supervision "$STATE"; then
     lines="$lines
