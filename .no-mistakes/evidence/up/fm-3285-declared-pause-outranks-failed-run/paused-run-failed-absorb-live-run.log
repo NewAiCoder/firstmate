@@ -1,0 +1,12 @@
+ok - config/paused-run-failed-absorb is off by default
+ok - a fresh declared pause outranks a failed run-step once opted in
+ok - the absorb bound expires and the failed run-step surfaces again
+ok - an invalid FM_PAUSED_RUN_FAILED_ABSORB_SECS fails closed
+ok - no run + idle pane on a paused: status reports state: paused with its reason
+ok - no run + idle pane honors the configured paused verb
+ok - crew_is_provably_working absorbs a validating crew found only via the runs-list fallback
+all fm-crew-state tests passed
+FM_TEST_END 2026-09-13T01:05:02Z tests/fm-crew-state.test.sh exit=0 duration_ms=14123 gate_skip=false
+ok - the absorbed pause composes through the real fm-crew-state.sh to suppress inactive-outcome reporting
+all inactive reconciliation tests passed
+FM_TEST_END 2026-09-13T01:05:28Z tests/fm-inactive-reconcile.test.sh exit=0 duration_ms=25779 gate_skip=false
