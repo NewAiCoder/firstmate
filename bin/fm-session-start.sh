@@ -881,7 +881,11 @@ if [ -f "$STATE/.afk-contract" ]; then
   printf 'present - away posture recorded at %s (hold-for-return only; bin/fm-afk-contract.sh readback for the mandate)' \
     "$("$SCRIPT_DIR/fm-afk-contract.sh" field entered 2>/dev/null || printf unknown)"
   if [ -e "$STATE/.afk" ]; then
-    printf '; the away daemon owns the watcher.\n'
+    if [ "$AFK_MODE" = quiet ]; then
+      printf '; the quiet daemon owns the watcher.\n'
+    else
+      printf '; the away daemon owns the watcher.\n'
+    fi
   else
     printf '; no daemon runs, the ordinary supervision session continues.\n'
   fi

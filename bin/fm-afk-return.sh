@@ -140,6 +140,9 @@ window_start_epoch() {
   fi
   if [ -z "$epoch" ] && [ -f "$STATE/.afk" ]; then
     flag=$(head -1 "$STATE/.afk" 2>/dev/null || true)
+    case "$flag" in
+      ''|*[!0-9]*) flag=$(sed -n '2p' "$STATE/.afk" 2>/dev/null || true) ;;
+    esac
     case "$flag" in ''|*[!0-9]*) ;; *) epoch=$flag ;; esac
   fi
   case "$epoch" in ''|*[!0-9]*) printf '' ;; *) printf '%s' "$epoch" ;; esac
