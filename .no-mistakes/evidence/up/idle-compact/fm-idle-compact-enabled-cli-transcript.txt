@@ -1,17 +1,16 @@
-CLI transcript: bin/fm-idle-compact.sh enabled reflects LIVE config state,
-not a generation-time snapshot. Demonstrates the exact worker-facing check
-the DOD block now instructs workers to run at wait time.
-
-$ FM_CONFIG_OVERRIDE=$DEMO/config bash bin/fm-idle-compact.sh enabled
-(config/idle-compact absent)
+$ FM_ROOT_OVERRIDE=$LAB bash bin/fm-idle-compact.sh enabled   # no config/idle-compact present
 exit=1
 
-$ echo 20 > $DEMO/config/idle-compact
-$ FM_CONFIG_OVERRIDE=$DEMO/config bash bin/fm-idle-compact.sh enabled
-20
+$ : > $LAB/config/idle-compact; ... enabled   # present but empty -> default 15
+15
 exit=0
 
-$ rm $DEMO/config/idle-compact
-$ FM_CONFIG_OVERRIDE=$DEMO/config bash bin/fm-idle-compact.sh enabled
-(config/idle-compact removed again)
+$ printf "42\n" > $LAB/config/idle-compact; ... enabled   # explicit minutes
+42
+exit=0
+
+$ printf "banana\n" > $LAB/config/idle-compact; ... enabled   # invalid value treated as disabled (typo-safe)
+exit=1
+
+$ printf "0\n" > $LAB/config/idle-compact; ... enabled   # zero treated as disabled
 exit=1
