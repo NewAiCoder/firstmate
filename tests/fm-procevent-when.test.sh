@@ -411,6 +411,153 @@ assert_absent "$ACTION_TAMPER_LOG" "the mutated action was not executed"
 assert_absent "$H/state/when/when-action-tamper.fired" "no fire was claimed for mutated action bytes"
 pass "mutated action bytes are refused before claiming the fire"
 
+# --- rebind-all reaches a watch whose poller is already running -------------
+# The self-update race the fire-time revalidation targets: `run` calls
+# spec_load once before entering its poll loop and caches the action hash in
+# memory for the rest of its life. If the self-update (and its rebind-all)
+# land while that poll loop is still running, only rewriting the on-disk spec
+# and trust is not enough - the fire-time check must re-read the binding from
+# disk, or the still-running poller compares against its stale in-memory hash
+# and rejects a perfectly legitimate post-update fire.
+H="$TMP_ROOT/h-live-rebind"; new_home "$H"
+REPO_ROOT="$TMP_ROOT/live-rebind-repo"
+mkdir -p "$REPO_ROOT/bin"
+LIVE_ACT="$REPO_ROOT/bin/act.sh"
+cat > "$LIVE_ACT" <<'SH'
+#!/usr/bin/env bash
+echo v1 >> "$1"
+echo "v1 ran against $1"
+SH
+chmod +x "$LIVE_ACT"
+LIVE_TRIGGER="$TMP_ROOT/live-rebind-trigger"
+LIVE_COUNTER="$TMP_ROOT/live-rebind-count"
+LIVE_LOG="$TMP_ROOT/live-rebind.log"
+when_live_ro() { FM_HOME="$1" FM_ROOT_OVERRIDE="$REPO_ROOT" "$ROOT/bin/fm-procevent-when.sh" "${@:2}"; }
+
+when_live_ro "$H" arm live-rebind --interval 0.1 --stable 1 \
+  --condition "$COND" "$LIVE_TRIGGER" "$LIVE_COUNTER" \
+  --action "$LIVE_ACT" "$LIVE_LOG" >/dev/null
+
+# Start the poller now, before the simulated self-update, so its one-time
+# spec_load caches the pre-update (v1) action hash in memory.
+pe "$H" reconcile >/dev/null
+wait_for_file "$LIVE_COUNTER" || fail "the live-rebind poller never evaluated its condition"
+
+# Simulate the self-update while that poller is still running: rewrite the
+# action's bytes in place, then rebind-all republishes the on-disk trust
+# binding to match. The already-running poller's in-memory hash is untouched.
+cat > "$LIVE_ACT" <<'SH'
+#!/usr/bin/env bash
+echo v2 >> "$1"
+echo "v2 ran against $1"
+SH
+chmod +x "$LIVE_ACT"
+OUT=$(when_live_ro "$H" rebind-all) || fail "rebind-all reported a failure during a live poll: $OUT"
+assert_contains "$OUT" "rebound: when-live-rebind" "the live watch's trust binding was rebound on disk"
+
+# Let the condition go true; the still-running poller must pick up the fresh
+# binding at fire time instead of comparing against its stale cached hash.
+: > "$LIVE_TRIGGER"
+wait_for_result "$H" when-live-rebind || fail "the live poller never captured an outcome after rebind-all"
+RESULT=$(first_result "$H" when-live-rebind)
+assert_grep 'status: fired' "$RESULT" \
+  "a watch whose poller was already running when rebind-all ran must still fire, not be rejected as stale"
+assert_grep 'v2 ran against' "$RESULT" "the fired action ran the post-update bytes, not the ones cached at poll start"
+pass "rebind-all reaches a watch whose run process was already polling when the self-update landed"
+
+# --- the fire-time reload never observes rebind_one's publish mid-rename ----
+# publish_spec is not an atomic swap: it renames the new spec into place, then
+# separately renames the new trust into place. A `run` process reloading the
+# binding at fire time must serialize against that window instead of reading
+# a spec already rebound to v2 next to a trust record still bound to v1 - the
+# exact torn combination that would otherwise report the rebind itself as a
+# trust violation. This test builds that torn state under a held per-sid lock
+# (the same lock rebind_one takes) so the reload's timing is deterministic,
+# not a race that only sometimes reproduces.
+H="$TMP_ROOT/h-torn-race"; new_home "$H"
+TORN_ACT="$TMP_ROOT/torn-act.sh"
+cat > "$TORN_ACT" <<'SH'
+#!/usr/bin/env bash
+echo v1 >> "$1"
+echo "v1 ran against $1"
+SH
+chmod +x "$TORN_ACT"
+TORN_TRIGGER="$TMP_ROOT/torn-race-trigger"
+TORN_COUNTER="$TMP_ROOT/torn-race-count"
+TORN_LOG="$TMP_ROOT/torn-race.log"
+when "$H" arm torn-race --interval 0.05 --stable 1 \
+  --condition "$COND" "$TORN_TRIGGER" "$TORN_COUNTER" \
+  --action "$TORN_ACT" "$TORN_LOG" >/dev/null
+SID=$(when "$H" source-id torn-race)
+SPEC_TORN="$H/state/when/$SID.spec"
+TRUST_TORN="$H/state/when/$SID.trust"
+
+# Start the poller now, with the condition still false, so reconcile's own
+# brief use of this same per-sid lock (to claim and launch the source) is
+# already done and released well before the holder below ever takes it.
+pe "$H" reconcile >/dev/null
+wait_for_file "$TORN_COUNTER" || fail "the torn-race poller never evaluated its condition"
+
+# Simulate the self-update, then build the rebound (v2) spec+trust pair ahead
+# of time exactly as publish_spec would (same fields, only action_sha256
+# differs), so the background holder below only performs the two renames.
+cat > "$TORN_ACT" <<'SH'
+#!/usr/bin/env bash
+echo v2 >> "$1"
+echo "v2 ran against $1"
+SH
+chmod +x "$TORN_ACT"
+NEW_HASH=$(fm_pr_sha256 "$TORN_ACT")
+NEW_SPEC="$TMP_ROOT/torn-race-new.spec"
+sed "s/^action_sha256=.*/action_sha256=$NEW_HASH/" "$SPEC_TORN" > "$NEW_SPEC"
+NEW_SPEC_HASH=$(fm_pr_sha256 "$NEW_SPEC")
+NEW_TRUST="$TMP_ROOT/torn-race-new.trust"
+printf 'fm-when-trust-v1\n%s\n' "$NEW_SPEC_HASH" > "$NEW_TRUST"
+chmod 0600 "$NEW_SPEC" "$NEW_TRUST"
+
+TORN_READY="$TMP_ROOT/torn-ready"
+TORN_RELEASE="$TMP_ROOT/torn-release"
+rm -f "$TORN_READY" "$TORN_RELEASE"
+parent=$$
+FM_HOME="$TMP_ROOT/torn-race-lock-helper-home" bash -c '
+  . "$1/bin/fm-pr-lib.sh"
+  . "$1/bin/fm-wake-lib.sh"
+  . "$1/bin/fm-procevent-lib.sh"
+  fm_procevent_source_lock_acquire "$2" || exit 1
+  trap "fm_procevent_source_lock_release \"$2\"" EXIT
+  mv -f -- "$3" "$5"
+  printf "ready\n" > "$6"
+  while [ ! -e "$7" ]; do
+    kill -0 "$8" 2>/dev/null || exit 0
+    sleep 0.02
+  done
+  mv -f -- "$4" "$9"
+' _ "$ROOT" "$SID" "$NEW_SPEC" "$NEW_TRUST" "$SPEC_TORN" "$TORN_READY" "$TORN_RELEASE" "$parent" "$TRUST_TORN" &
+HOLDER_PID=$!
+
+wait_for_file "$TORN_READY" || fail "the torn-write holder never installed the rebound spec"
+grep -qx "action_sha256=$NEW_HASH" "$SPEC_TORN" \
+  || fail "test fixture error: the torn window did not actually install the rebound spec"
+[ "$(sed -n '2p' "$TRUST_TORN")" != "$NEW_SPEC_HASH" ] \
+  || fail "test fixture error: the trust file was rebound before the torn window began"
+
+# The still-running poller now sees its condition go true and reaches the
+# fire-time reload while the torn state above is live and the lock is held.
+: > "$TORN_TRIGGER"
+sleep 0.3
+if first_result "$H" "$SID" >/dev/null 2>&1; then
+  fail "the reload must block on the source lock instead of reading the torn spec/trust pair"
+fi
+
+: > "$TORN_RELEASE"
+wait "$HOLDER_PID" 2>/dev/null || true
+wait_for_result "$H" "$SID" || fail "the watch never captured an outcome after the torn window closed"
+RESULT=$(first_result "$H" "$SID")
+assert_grep 'status: fired' "$RESULT" \
+  "the reload must wait past the torn spec/trust window, not reject a legitimate rebind mid-publish"
+assert_grep 'v2 ran against' "$RESULT" "the fired action ran the rebound (v2) bytes, not a rejection from a torn read"
+pass "the fire-time reload never observes rebind_one's spec/trust publish mid-rename"
+
 # --- an action environment reaches the action, and its NAME is validated ------
 H="$TMP_ROOT/h-action-env"; new_home "$H"
 ENVLOG="$TMP_ROOT/action-env-act"
