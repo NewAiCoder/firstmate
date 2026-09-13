@@ -51,6 +51,14 @@
 # A positively dead or missing endpoint has no agent to replace and is left to
 # the ordinary startup recovery.
 #
+# A fast-forward that lands changes bytes under bin/ in place, which desyncs
+# the trust binding of any locally armed fm-procevent-when watch whose action
+# executable lives in the updated repo; left alone, the watch's next fire
+# would be wrongly refused. After each home's own update (primary and every
+# local secondmate), this script best-effort runs that home's own
+# fm-procevent-when.sh rebind-all to republish those bindings against the new
+# bytes; a failure there is swallowed rather than failing the update.
+#
 # Usage: fm-update.sh [--help]
 set -eu
 
