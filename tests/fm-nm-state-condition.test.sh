@@ -61,7 +61,7 @@ check "a failing probe is an error, never a true" 2 "$?"
 # error - an error here counts against the when-runner's error budget and
 # kills the watch after 3 polls.
 NOINIT_SNAP="$TMP/noinit-snap"
-printf 'error: repo not initialized (run '"'"'no-mistakes init'"'"' first)\nhelp[1]: Run `no-mistakes init` to set up the gate in this repository\n' > "$TMP/noinit.toon"
+printf "error: repo not initialized (run 'no-mistakes init' first)\nhelp[1]: Run \`no-mistakes init\` to set up the gate in this repository\n" > "$TMP/noinit.toon"
 cat > "$TMP/bin/no-mistakes" <<'STUB'
 #!/usr/bin/env bash
 cat "$NM_STUB_OUT"
