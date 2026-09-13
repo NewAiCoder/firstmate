@@ -1,0 +1,43 @@
+fm-afk-return.sh begin - manual end-to-end drive of the return brief for three
+watcher-down marker states, run against the built bin/fm-afk-return.sh at
+target commit 0cf82d5 (fix: treat an acked watcher-down marker as no gap).
+
+=== ACKED marker (acked:downtime:fixture-generation) - expect no gap ===
+=== Return brief (away 2026-09-13T08:09:17Z -> 2026-09-13T08:09:18Z, 1s) ===
+Supervisor health:
+  - supervision ran through the away window with no detected gap (watcher beat 0s old at return)
+Mandate clauses:
+  (none recorded)
+Waiting on you:
+  (nothing)
+Tried and failed, or could not be fixed:
+  (nothing)
+Handled while away:
+  (no routine outcomes recorded in the store for this window)
+Cost: 0 supervision outcome(s) recorded (0 routine, 0 captain); 0 task(s) live at return.
+catch-up health: supervision ran through the away window with no detected gap (watcher beat 0s old at return)
+fm-afk-return: catch-up clear; ordinary captain work may proceed
+
+=== PENDING marker (pending:downtime:fixture-generation) - must still GAP ===
+  - GAP: watcher downtime was detected during the away window (recovery marker present)
+catch-up health: GAP: watcher downtime was detected during the away window (recovery marker present)
+
+=== MALFORMED marker (garbage-not-a-token) - must conservatively GAP ===
+  - GAP: watcher downtime was detected during the away window (recovery marker present)
+catch-up health: GAP: watcher downtime was detected during the away window (recovery marker present)
+
+=== Regression proof: pre-fix behavior on the ACKED marker ===
+Ran the new test `test_return_brief_does_not_report_an_acked_watcher_down_marker_as_a_gap`
+against the base commit's bin/fm-afk-return.sh (0962d4a, pre-fix):
+
+not ok - an acked recovery marker was reported as an open gap (unexpected: 'GAP: watcher downtime was detected')
+--- output ---
+=== Return brief (away 2026-09-13T08:08:15Z -> 2026-09-13T08:08:15Z, 0s) ===
+Supervisor health:
+  - GAP: watcher downtime was detected during the away window (recovery marker present)
+...
+catch-up health: GAP: watcher downtime was detected during the away window (recovery marker present)
+fm-afk-return: catch-up clear; ordinary captain work may proceed
+
+Confirms the fix closes upstream issue #4343: an already-handled (acked)
+downtime episode no longer surfaces as a false GAP on every later return.
