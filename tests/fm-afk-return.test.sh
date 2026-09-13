@@ -677,6 +677,24 @@ test_return_brief_health_leads_with_a_gap() {
   pass "the return brief leads with supervisor health and names every detected gap"
 }
 
+test_return_brief_does_not_report_an_acked_watcher_down_marker_as_a_gap() {
+  local dir out
+  dir="$TMP_ROOT/brief-acked-marker"
+  install_runner "$dir"
+  contract_in "$dir" propose >/dev/null 2>&1 || fail "could not propose the away-posture record"
+  contract_in "$dir" confirm >/dev/null 2>&1 || fail "could not write the away-posture record"
+  # An episode that was detected and fully handled during the away window
+  # leaves the marker behind in an acked state (fm-wake-lib.sh
+  # _fm_recovery_marker_ack); that is not an open gap.
+  printf 'acked:downtime:fixture-generation\n' > "$dir/home/state/.watcher-down"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(run_return "$dir" begin) || fail "a clean fleet with only a handled marker should clear the gate: $out"
+  assert_not_contains "$out" 'GAP: watcher downtime was detected' "an acked recovery marker was reported as an open gap"
+  assert_contains "$out" 'no detected gap' "a fully acked window was not reported as clean"
+  pass "the return brief does not report an already-acked watcher-down marker as an open gap"
+}
+
 test_return_brief_without_a_record_reports_the_legacy_flag() {
   local dir out
   dir="$TMP_ROOT/brief-legacy"
@@ -784,4 +802,5 @@ test_failed_held_listing_keeps_catchup_gated
 test_unreadable_status_file_keeps_catchup_gated
 test_return_guard_refuses_while_the_record_exists
 test_return_brief_health_leads_with_a_gap
+test_return_brief_does_not_report_an_acked_watcher_down_marker_as_a_gap
 test_return_brief_without_a_record_reports_the_legacy_flag
