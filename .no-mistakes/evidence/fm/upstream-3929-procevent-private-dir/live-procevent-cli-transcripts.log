@@ -1,0 +1,14 @@
+=== Scenario 1: fm-procevent.sh refuses a group-writable state root with an actionable reason ===
+$ FM_HOME=/tmp/tmp.elPYTygckT/home /home/dvids/.no-mistakes/worktrees/19081f4aeae9/01M2FBCHEGYTQ79G00EMJGA3XD/bin/fm-procevent.sh list
+error: process-event state root is not a private directory (reason: bad-mode)
+exit=1
+
+=== Scenario 5: fm-procevent-when.sh arm refuses loudly at arm time (same state root) ===
+$ FM_HOME=/tmp/tmp.elPYTygckT/home /home/dvids/.no-mistakes/worktrees/19081f4aeae9/01M2FBCHEGYTQ79G00EMJGA3XD/bin/fm-procevent-when.sh arm testwatch --condition -- true --action -- true
+error: process-event state root is not a private directory - chmod 750 /tmp/tmp.elPYTygckT/home/state, then re-arm
+exit=1
+
+=== Scenario 6: a symlinked state root that regressed to group-writable is diagnosed bad-mode, not missing ===
+$ FM_HOME=/tmp/tmp.49saGTUt6j/home /home/dvids/.no-mistakes/worktrees/19081f4aeae9/01M2FBCHEGYTQ79G00EMJGA3XD/bin/fm-procevent.sh list   (state -> symlink -> real dir at 775)
+error: process-event state root is not a private directory (reason: bad-mode)
+exit=1

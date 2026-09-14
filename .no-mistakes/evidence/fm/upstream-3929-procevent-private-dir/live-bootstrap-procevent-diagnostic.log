@@ -1,0 +1,10 @@
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: a group-writable state root with registered sources reports an actionable PROCEVENT diagnostic
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: a private state root with registered sources stays silent
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: a home with no process-event registrations stays silent regardless of state permissions
+all bootstrap-procevent tests passed
