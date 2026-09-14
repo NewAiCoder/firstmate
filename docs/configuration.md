@@ -1280,7 +1280,7 @@ FM_INJECT_CONFIRM_SLEEP=0.5        # seconds between daemon submit checks
 FM_HEARTBEAT_SCAN_SECS=300         # cadence of the catch-all status scan for missed captain verbs
 FM_IDLE_COMPACT_INTERVAL=300       # seconds between idle-compact eligibility sweeps (watcher and away-mode daemon alike)
 FM_IDLE_COMPACT_SAVE_TIMEOUT_SECS=900   # seconds to wait for a sent precompact-notes save turn to complete before abandoning that idle episode
-FM_IDLE_COMPACT_SETTLE_SECS=       # seconds after a /compact send before the done-phase status/pane baseline is captured (default: FM_IDLE_COMPACT_INTERVAL), so the compaction render never reads as new activity
+FM_IDLE_COMPACT_SETTLE_SECS=       # seconds after a /compact send before the done-phase status/pane baseline is captured, overriding both path defaults below (declared: config/idle-compact's second line, default 60; ordinary: FM_IDLE_COMPACT_INTERVAL), so the compaction render never reads as new activity
 FM_IDLE_COMPACT_RING_BACKSTOP_SECS=600  # seconds a phase=done marker over a still-declared pause may sit with no ring recorded anywhere in the task's inbox before the backstop re-sends the ring, once per episode
 FM_IDLE_COMPACT_LOG_MAX_BYTES=65536     # size cap for state/.idle-compact.log (only the ring backstop writes here) before it is trimmed to its last 200 lines
 FM_HOUSEKEEPING_TICK=15            # seconds between batch-flush, stale/pause-recheck, and scan passes
