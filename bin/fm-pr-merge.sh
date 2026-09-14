@@ -961,20 +961,18 @@ persist_accepted_merge_authority() {
   return 1
 }
 
-# While away, a merge normally proceeds only when the base branch's rules prove
-# no merge queue, because a queued merge can land after its away authority
-# lapses. A repository whose plan does not expose branch rules at all (GitHub's
-# "Upgrade to GitHub Pro or make this repository public" 403) proves that on
-# its own, since such a repository cannot have a merge_queue rule either; see
-# github_read_queue_method. A task named in the current away record's
-# merge-grant list skips the proof for any other case where the queue state
-# cannot be read (auth, rate limit, network, a 404, or an unrelated 403): the
-# grant is the captain's own per-task decision to let this merge run
-# unattended anyway. A standing yolo=on posture does not qualify, because it is
-# a project setting rather than a decision the captain made for this merge, so
-# it still needs a provably clear queue. The grant skips only this proof; the
-# merge stays synchronous (--auto is refused earlier) and every other gate
-# still applies.
+# While away, a merge proceeds only when the base branch's rules prove no
+# merge queue, because a queued merge can land after its away authority
+# lapses; this holds regardless of which away authority (a named merge grant
+# or a standing yolo=on posture) let the merge run at all. A repository whose
+# plan does not expose branch rules at all (GitHub's "Upgrade to GitHub Pro or
+# make this repository public" 403) proves that on its own, since such a
+# repository cannot have a merge_queue rule either; see
+# github_read_queue_method, which resolves that specific 403 to status=none.
+# Every other failure to read the queue state (auth, rate limit, network, a
+# 404, or an unrelated 403) stays unreadable and refuses the merge. The merge
+# stays synchronous (--auto is refused earlier) and every other gate still
+# applies.
 refuse_github_queue_while_away() {
   [ "$FM_PR_AWAY_POSTURE" = true ] || return 0
   # Accepted confused-agent-grade limitation, as in bin/fm-lease-lib.sh, not an

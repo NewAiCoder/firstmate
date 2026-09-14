@@ -871,10 +871,10 @@ test_github_plan_gated_403_reads_as_no_queue() {
   pass "fm-pr-merge reads a plan-gated 403 on branch rules as no merge queue, not unreadable"
 }
 
-# The practical effect of the fix: while away with no per-task grant, a
-# private repository's plan-gated 403 must no longer refuse the merge the way
-# any other unreadable queue response does (test_away_queue_proof_is_skipped_
-# only_for_a_named_grant's away-yolo-unreadable-queue case, above).
+# The practical effect of the fix: while away under a standing yolo=on
+# posture (no per-task merge grant), a private repository's plan-gated 403
+# must no longer refuse the merge the way any other unreadable queue response
+# does.
 test_away_plan_gated_403_does_not_block_the_merge() {
   local case_dir rc url head
   head=cececececececececececececececececececece
