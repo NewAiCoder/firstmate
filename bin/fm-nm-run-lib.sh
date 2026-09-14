@@ -155,6 +155,61 @@ fm_nm_run_is_pipeline_owned_active() {  # <toon-output>
   fm_nm_run_is_active "$1"
 }
 
+# Scalar value of a key nested exactly one level under `branch_sync.local:` in
+# captured `axi status` TOON $1, indentation-bounded like the active_steps[]/
+# steps[] table readers in fm-crew-state.sh so a same-named key in a sibling
+# branch_sync block (pipeline, target) or the top-level run object is never
+# picked up.
+fm_nm_branch_sync_local_field() {  # <toon-output> <key>
+  printf '%s\n' "$1" | awk -v key="$2" '
+    /^[[:space:]]*branch_sync:[[:space:]]*$/ { insync = 1; next }
+    insync && /^[^[:space:]]/ { insync = 0 }
+    insync && /^[[:space:]]*local:[[:space:]]*$/ {
+      match($0, /[^ \t]/); hdr = RSTART; inlocal = 1; next
+    }
+    insync && inlocal {
+      match($0, /[^ \t]/)
+      if (RSTART <= hdr) { inlocal = 0; next }
+      line = $0
+      sub(/^[[:space:]]*/, "", line)
+      if (line ~ ("^" key ":")) {
+        sub("^" key ":[[:space:]]*", "", line)
+        print line
+        exit
+      }
+    }
+  '
+}
+
+# 0 if captured `axi status` TOON $2's branch_sync.local block proves the run
+# was SUBMITTED from worktree $1 on branch $3: local.branch equals $3 and
+# local.head equals this worktree's own HEAD exactly. branch_sync.local is
+# stamped once, at submission time, from whichever worktree or registered
+# clone ran `no-mistakes axi run` - unlike the run's top-level/current head
+# (fm_nm_head_matches_worktree above), it needs no local object resolution,
+# so it still binds a run whose CURRENT head this copy never fetched: the
+# routine shape for a registered nm_clone (a throwaway clone the pipeline
+# never pulls fix-round commits back into) and, just as often, an ordinary
+# worktree mid-fix-round while branch_sync.state reads "behind" rather than
+# "pipeline_owned" (the pipeline_owned exemption above is transient and does
+# not cover this steady state). Exact equality only, like the anchor rule in
+# fm_nm_runs_status_for_worktree below: local work that has advanced past
+# what was submitted must not bind here either.
+# (Root cause of a registered nm_clone, and a firstmate-self pooled worktree,
+# both reading "no run found" while `axi status` run directly in the same
+# path found the run every time - kunchenguid/firstmate issue #43, fixed
+# 2026-09-14.)
+fm_nm_run_is_local_submission() {  # <worktree> <toon-output> <branch>
+  local wt=$1 out=$2 branch=$3 local_branch local_head worktree_head
+  [ -n "$branch" ] || return 1
+  local_branch=$(fm_nm_strip_quotes "$(fm_nm_branch_sync_local_field "$out" branch)")
+  local_head=$(fm_nm_strip_quotes "$(fm_nm_branch_sync_local_field "$out" head)")
+  [ -n "$local_branch" ] && [ -n "$local_head" ] || return 1
+  [ "$local_branch" = "$branch" ] || return 1
+  worktree_head=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || return 1
+  [ "$local_head" = "$worktree_head" ]
+}
+
 # ONE owner for attribution from the pipeline's own runs ledger, replacing a
 # per-row scan-and-skip. The ledger is the real top-level `no-mistakes runs
 # --limit N` listing (plain text, no run id, no quoting, newest-first, columns

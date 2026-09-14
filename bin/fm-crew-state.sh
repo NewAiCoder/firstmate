@@ -36,7 +36,13 @@
 #      diverged from it, invalidates attribution. While the pipeline owns the
 #      branch (branch_sync.state=pipeline_owned), its own custody attribution
 #      binds an ACTIVE run without head equality (fm_nm_run_is_pipeline_owned_active
-#      in bin/fm-nm-run-lib.sh).
+#      in bin/fm-nm-run-lib.sh). branch_sync.local also binds a run whose top-level
+#      head this copy cannot resolve, when local.branch/local.head - stamped once
+#      at submission time - exactly match this worktree's branch and current HEAD
+#      (fm_nm_run_is_local_submission in bin/fm-nm-run-lib.sh): the routine shape
+#      for a registered nm_clone (a throwaway clone the pipeline never pulls
+#      fix-round commits back into) and for an ordinary worktree mid-fix-round
+#      while branch_sync.state reads "behind" rather than "pipeline_owned".
 #      A run head whose commit object the task copy never fetched (the pipeline
 #      committed its fix round in its own checkout) cannot be verified locally;
 #      that row is recognized only as a provable pipeline-owned continuation -
@@ -603,6 +609,14 @@ nm_run_head_matches_worktree() {
   fm_nm_head_matches_worktree "$NM_WT" "$run_head"
 }
 
+# 0 if branch_sync.local in $RUN_OUT proves this run was submitted from
+# NM_WT on CREW_BRANCH - the fm_nm_run_is_local_submission binding, which
+# needs no local resolution of the run's current/progressed head (see its
+# header comment in bin/fm-nm-run-lib.sh).
+nm_run_is_local_submission() {
+  fm_nm_run_is_local_submission "$NM_WT" "$RUN_OUT" "$CREW_BRANCH"
+}
+
 HAVE_RUN=0
 # RUN_SOURCE distinguishes the two ways HAVE_RUN=1 can happen: "full" means
 # $RUN_OUT is real `axi status` TOON with step/gate detail (including a
@@ -623,7 +637,8 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
     # authoritative and the lane head need not be a git object here
     # (fm_nm_run_is_pipeline_owned_active in bin/fm-nm-run-lib.sh).
     if [ -n "$run_branch" ] && [ "$run_branch" = "$CREW_BRANCH" ] \
-      && { nm_run_head_matches_worktree || fm_nm_run_is_pipeline_owned_active "$RUN_OUT"; }; then
+      && { nm_run_head_matches_worktree || fm_nm_run_is_pipeline_owned_active "$RUN_OUT" \
+        || nm_run_is_local_submission; }; then
       HAVE_RUN=1
       # Live-over-terminal (bin/fm-nm-run-lib.sh). Bare `axi status` answers
       # with the most-recently-touched run, which after a pipeline crash is the
