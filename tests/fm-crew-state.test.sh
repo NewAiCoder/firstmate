@@ -2443,6 +2443,122 @@ outcome: failed"
   pass "the exemption never applies to a terminal run"
 }
 
+# --- Run-attribution via branch_sync.local (submission-stamped) -------------
+# The daemon can advance a run's head in its own internal checkout without
+# ever fetching it back into the worktree or registered clone this task's
+# crew reads from - the routine shape for a registered nm_clone (a throwaway
+# clone the pipeline never pulls fix-round commits back into), and just as
+# often an ordinary worktree mid-fix-round while branch_sync.state reads
+# "behind" rather than "pipeline_owned" (kunchenguid/firstmate#43). The
+# top-level head is deliberately unresolvable in every fixture below so only
+# the branch_sync.local exemption - never an accidental match elsewhere -
+# attributes the run; branch_sync.local itself is settable per test.
+run_running_local_submission() {  # <branch> <local-head> [<sync-state>] [<local-branch>]
+  cat <<EOF
+run:
+  id: "01RUNLOCAL"
+  branch: $1
+  status: running
+  head: "ffffffffffffffffffffffffffffffffffffffff"
+  pr: ""
+  findings: none
+  steps[2]{step,status,findings,duration_ms}:
+    intent,completed,0,0
+    review,running,0,0
+branch_sync:
+  state: ${3:-behind}
+  changed: false
+  local:
+    branch: ${4:-$1}
+    head: "$2"
+    clean: true
+  next_action:
+    code: continue_active_run
+    command: no-mistakes axi status
+EOF
+}
+
+# The firstmate-self pooled-worktree shape from the issue: no nm_clone, the
+# pipeline validates the task's own worktree directly, but its current head
+# still is not (yet) a local object while a fix round runs elsewhere.
+test_local_submission_unresolvable_head_attributed() {
+  reset_fakes
+  local d wt_head; d=$(new_case local-submission)
+  make_repo_on_branch "$d/wt" fm/feat-localsub
+  wt_head=$(git -C "$d/wt" rev-parse HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-localsub.meta" "window=fm:fm-feat-localsub" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'paused: no-mistakes run in progress, clears on its own\n' > "$d/state/feat-localsub.status"
+  arm_idle_record "$d/state" feat-localsub
+  FM_FAKE_AXI_STATUS="$(run_running_local_submission fm/feat-localsub "$wt_head")"
+  local out; out=$(run_crew_state "$d" feat-localsub)
+  assert_contains "$out" "source: run-step" "branch_sync.local proves this run belongs to the worktree even though its current head is unresolvable"
+  assert_contains "$out" "state: working" "the attributed running run reads working"
+  pass "branch_sync.local binds an unresolvable-head run submitted from this worktree"
+}
+
+# The registered-clone shape from the issue (kunchenguid/firstmate#43): the
+# pipeline validates in a throwaway clone the crew registered with
+# bin/fm-nm-watch.sh register-clone, and the clone's own HEAD (what it was
+# cloned/submitted at) never advances locally as the daemon's own checkout
+# progresses past it.
+test_registered_clone_local_submission_unresolvable_head_attributed() {
+  reset_fakes
+  local d clone_head; d=$(new_case clone-local-submission)
+  make_repo_on_branch "$d/wt" fm/feat-clonelocal
+  git clone -q "$d/wt" "$d/clone"
+  clone_head=$(git -C "$d/clone" rev-parse HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-clonelocal.meta" "window=fm:fm-feat-clonelocal" "worktree=$d/wt" "kind=ship" "harness=claude" "nm_clone=$d/clone"
+  printf 'paused: no-mistakes run in progress, clears on its own\n' > "$d/state/feat-clonelocal.status"
+  arm_idle_record "$d/state" feat-clonelocal
+  FM_FAKE_AXI_STATUS="$(run_running_local_submission fm/feat-clonelocal "$clone_head")"
+  local out; out=$(run_crew_state "$d" feat-clonelocal)
+  assert_contains "$out" "source: run-step" "a registered clone's branch_sync.local binds its unresolvable-head run"
+  assert_contains "$out" "state: working" "the registered clone's attributed run reads working"
+  pass "a registered clone's unresolvable-head run binds via branch_sync.local"
+}
+
+# Negative control: exact equality only. Local work that advanced past what
+# was submitted (branch_sync.local.head no longer this worktree's HEAD) must
+# not bind, exactly like the existing head-equality rule for the top-level
+# head.
+test_local_submission_mismatched_head_not_attributed() {
+  reset_fakes
+  local d; d=$(new_case local-submission-mismatch)
+  make_repo_on_branch "$d/wt" fm/feat-localsub-mismatch
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-localsub-mismatch.meta" "window=fm:fm-feat-localsub-mismatch" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: implementing\n' > "$d/state/feat-localsub-mismatch.status"
+  FM_FAKE_AXI_STATUS="$(run_running_local_submission fm/feat-localsub-mismatch e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5)"
+  FM_FAKE_BUSY=0
+  arm_idle_record "$d/state" feat-localsub-mismatch
+  local out; out=$(run_crew_state "$d" feat-localsub-mismatch)
+  assert_not_contains "$out" "source: run-step" "branch_sync.local with a mismatched head must not bind"
+  assert_contains "$out" "source: status-log" "falls back to the status log without the exemption"
+  pass "branch_sync.local requires an exact head match, not just a matching branch"
+}
+
+# Negative control: branch_sync.local names a different branch than the
+# task's own - the exemption must check local.branch itself, not only the
+# top-level run.branch the caller already matched against CREW_BRANCH.
+test_local_submission_mismatched_branch_not_attributed() {
+  reset_fakes
+  local d wt_head; d=$(new_case local-submission-branch-mismatch)
+  make_repo_on_branch "$d/wt" fm/feat-localsub-branch
+  wt_head=$(git -C "$d/wt" rev-parse HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-localsub-branch.meta" "window=fm:fm-feat-localsub-branch" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: implementing\n' > "$d/state/feat-localsub-branch.status"
+  FM_FAKE_AXI_STATUS="$(run_running_local_submission fm/feat-localsub-branch "$wt_head" behind fm/some-other-branch)"
+  FM_FAKE_BUSY=0
+  arm_idle_record "$d/state" feat-localsub-branch
+  local out; out=$(run_crew_state "$d" feat-localsub-branch)
+  assert_not_contains "$out" "source: run-step" "branch_sync.local naming a different branch must not bind"
+  assert_contains "$out" "source: status-log" "falls back to the status log without the exemption"
+  pass "branch_sync.local requires its own branch to match, not only the top-level run branch"
+}
+
 test_missing_run_head_falls_back_to_current_state() {
   reset_fakes
   local d out
@@ -2687,6 +2803,10 @@ test_coarse_unresolvable_active_row_never_falls_to_older_row
 test_coarse_mismatched_anchor_falls_to_pane_not_older_row
 test_non_pipeline_owned_unresolvable_head_not_attributed
 test_pipeline_owned_terminal_run_not_exempt
+test_local_submission_unresolvable_head_attributed
+test_registered_clone_local_submission_unresolvable_head_attributed
+test_local_submission_mismatched_head_not_attributed
+test_local_submission_mismatched_branch_not_attributed
 test_missing_run_head_falls_back_to_current_state
 test_active_fix_round_unfetched_pipeline_head_reports_current
 test_unanchored_unfetched_active_row_does_not_match
