@@ -1189,6 +1189,20 @@ pause_state_class() {  # <window> <task>
   fi
   class=$(crew_absorb_class "$task")
   if [ "$class" = working ]; then
+    # A working run-step is normally an authoritative state OVERRIDING the
+    # declared pause (e.g. "awaiting the upstream release" while a run-step is
+    # actually busy on something else) - suspicious enough that callers keep
+    # tracking it on the wedge ladder as a backstop. But when the declared line
+    # itself claims a no-mistakes run and the working run-step confirms exactly
+    # that run is alive, "working" IS the declared wait holding, not something
+    # overriding it: treat it as the ordinary paused cadence so a live pipeline
+    # backing "paused: no-mistakes run in progress" is not wedge-escalated on
+    # the ordinary STALE_ESCALATE_SECS cadence while it is genuinely running (#35).
+    if status_pause_claims_nm_run "$last"; then
+      date +%s > "$recheck_file"
+      printf 'paused'
+      return
+    fi
     rm -f "$recheck_file"
     printf 'working'
     return
