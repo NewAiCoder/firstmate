@@ -966,14 +966,18 @@ persist_accepted_merge_authority() {
 
 # While away, a merge normally proceeds only when the base branch's rules prove
 # no merge queue, because a queued merge can land after its away authority
-# lapses. A task named in the current away record's merge-grant list skips that
-# proof: the grant is the captain's own per-task decision to let this merge run
-# unattended, including when the queue state cannot be read (for example a
-# private repository whose plan does not expose branch rules). A standing
-# yolo=on posture does not qualify, because it is a project setting rather than
-# a decision the captain made for this merge, so it still needs a provably
-# clear queue. The grant skips only this proof; the merge stays synchronous
-# (--auto is refused earlier) and every other gate still applies.
+# lapses. A repository whose plan does not expose branch rules at all (GitHub's
+# "Upgrade to GitHub Pro or make this repository public" 403) proves that on
+# its own, since such a repository cannot have a merge_queue rule either; see
+# github_read_queue_method. A task named in the current away record's
+# merge-grant list skips the proof for any other case where the queue state
+# cannot be read (auth, rate limit, network, a 404, or an unrelated 403): the
+# grant is the captain's own per-task decision to let this merge run
+# unattended anyway. A standing yolo=on posture does not qualify, because it is
+# a project setting rather than a decision the captain made for this merge, so
+# it still needs a provably clear queue. The grant skips only this proof; the
+# merge stays synchronous (--auto is refused earlier) and every other gate
+# still applies.
 refuse_github_queue_while_away() {
   [ "$FM_PR_AWAY_POSTURE" = true ] || return 0
   [ "$FM_PR_MERGE_AUTHORITY" = away-grant ] && return 0
