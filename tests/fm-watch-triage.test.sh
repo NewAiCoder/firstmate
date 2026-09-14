@@ -3109,6 +3109,65 @@ test_paused_authoritative_working_preserves_wedge_timer() {
   pass "a paused status overridden by authoritative working preserves its wedge timer and escalates"
 }
 
+# The exact scenario from #35: a worker parks on `paused: no-mistakes run in
+# progress` while the run genuinely is running (authoritative crew state:
+# working, source run-step). Unlike the preceding test - an UNRELATED declared
+# pause a working run-step overrides, which stays suspicious and keeps the
+# wedge backstop - the declared wait here IS that run, so a live pipeline
+# confirming it must never enter the wedge ladder: it holds the ordinary
+# bounded pause cadence for as long as the run stays alive, even once the
+# bounded recheck window elapses and STALE_ESCALATE_SECS is short.
+test_nm_run_declared_pause_with_live_run_never_wedge_escalates() {
+  local dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case nm-run-paused-live); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-nm-run-paused-live"
+  printf 'idle, awaiting nm run\n' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/nm-run-paused-live.meta"
+  printf 'paused: no-mistakes run in progress, clears on its own\n' > "$state/nm-run-paused-live.status"
+  sig=$(seen_sig "$state/nm-run-paused-live.status"); printf '%s' "$sig" > "$state/.seen-nm-run-paused-live_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle, awaiting nm run")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  printf '1\n' > "$state/.count-$key"
+  : > "$state/.paused-$key"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_PAUSE_RESURFACE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "watcher exited for a live no-mistakes run behind its own declared pause (should absorb): $(cat "$out")"
+  fi
+  [ -e "$state/.paused-$key" ] || { reap "$pid"; fail "a live nm run behind its own declared pause dropped the pause marker"; }
+  [ ! -e "$state/.stale-since-$key" ] || { reap "$pid"; fail "a live nm run behind its own declared pause started a wedge timer"; }
+  [ ! -s "$out" ] || { reap "$pid"; fail "a live nm run behind its own declared pause printed a wake reason: $(cat "$out")"; }
+  reap "$pid"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the intentional nm-run-paused-live stop"
+
+  # Force the bounded recheck window to have elapsed, then poll again with a
+  # short STALE_ESCALATE_SECS: a genuinely stuck run would now be free to
+  # wedge-escalate, but the run is still confirmed alive, so it must not.
+  rm -f "$state/.paused-rechecked-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=1 FM_PAUSE_RESURFACE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "watcher exited on the recheck of a live no-mistakes run behind its declared pause: $(cat "$out")"
+  fi
+  [ -e "$state/.paused-$key" ] || { reap "$pid"; fail "the rechecked live nm run dropped the pause marker"; }
+  [ ! -e "$state/.stale-since-$key" ] || { reap "$pid"; fail "the rechecked live nm run started a wedge timer"; }
+  if grep -F "possible wedge" "$out" >/dev/null; then
+    reap "$pid"; fail "a live nm run behind its own declared pause escalated as a possible wedge: $(cat "$out")"
+  fi
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+  pass "a declared no-mistakes-run pause backed by a live run holds the pause cadence and never wedge-escalates"
+}
+
 # --- consecutive wedge escalations on the same pane demand deep inspection ----
 # Root cause of the PR #252 incident's ~20 minutes of unnoticed green: each
 # wedge escalation fires, gets classified as "still validating" one poll later
@@ -5141,6 +5200,7 @@ test_secondmate_unpause_clears_pause_tracking
 test_nonterminal_stale_pause_transitions_reclassify_unchanged_hash
 test_nonterminal_paused_rechecks_authoritative_state
 test_paused_authoritative_working_preserves_wedge_timer
+test_nm_run_declared_pause_with_live_run_never_wedge_escalates
 test_nonterminal_stale_repairs_missing_or_corrupt_timer
 test_wedge_escalation_deferred_while_worktree_is_written
 test_write_deferral_resurfaces_on_the_bounded_cadence
