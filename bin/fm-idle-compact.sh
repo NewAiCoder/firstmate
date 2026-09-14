@@ -14,8 +14,10 @@
 # the idle threshold in whole minutes (an empty-but-present file enables the
 # feature at the documented 15-minute default); an invalid value is treated
 # exactly like an absent file, because a config typo must never fail a
-# watcher/daemon loop. See docs/configuration.md "Idle-worker pre-compaction"
-# for the full contract.
+# watcher/daemon loop. An optional SECOND content line is the declared-state
+# settle seconds (see "Declared-state fast path" below), whole positive
+# integer seconds, defaulting to 60 when absent or invalid. See
+# docs/configuration.md "Idle-worker pre-compaction" for the full contract.
 #
 # Eligibility, re-checked every FM_IDLE_COMPACT_INTERVAL seconds for every
 # task under state/*.meta, is strictly the intersection of:
@@ -61,11 +63,19 @@
 #      gate before sending /compact with focus text; a bounded
 #      FM_IDLE_COMPACT_SAVE_TIMEOUT_SECS abandons a turn that never
 #      completes. Once sent, record phase=settling with the send epoch.
-#   3. phase=settling: wait FM_IDLE_COMPACT_SETTLE_SECS (default one sweep
-#      interval) for the compaction summary to finish rendering, then record
-#      phase=done with the status-line and pane-tail signatures - captured
-#      after the render so the compaction's own output is baked into the
-#      baseline and never reads as new worker activity.
+#   3. phase=settling: wait for the compaction summary to finish rendering,
+#      then record phase=done with the status-line and pane-tail signatures -
+#      captured after the render so the compaction's own output is baked into
+#      the baseline and never reads as new worker activity. The wait itself is
+#      FM_IDLE_COMPACT_SETTLE_SECS when set (mainly for tests); otherwise a
+#      declared episode (marker field declared=1) waits config/idle-compact's
+#      optional second content line, in whole seconds, defaulting to 60 - the
+#      worker is waiting on firstmate, not an external event, so there is
+#      nothing to settle out beyond the render itself - while an ordinary
+#      episode keeps waiting one full FM_IDLE_COMPACT_INTERVAL sweep, since an
+#      ordinary worker's own pane activity is still settling too.
+#      See docs/configuration.md "Idle-worker pre-compaction" and
+#      github.com/NewAiCoder/firstmate#34 for why the two paths differ.
 #   4. phase=done: a changed status or pane-tail signature (a new status
 #      append or new pane activity) ends the episode, replacing the marker
 #      with a phase=reset activity stamp so the next episode is evaluated
@@ -138,6 +148,7 @@ DATA="${FM_DATA_OVERRIDE:-${DATA:-$FM_HOME/data}}"
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
 
 FM_IDLE_COMPACT_DEFAULT_MINUTES=15
+FM_IDLE_COMPACT_DECLARED_SETTLE_DEFAULT_SECS=60
 FM_IDLE_COMPACT_CREW_STATE_BIN="${FM_CREW_STATE_BIN:-$SCRIPT_DIR/fm-crew-state.sh}"
 
 # The declared-state phrase a no-mistakes ship brief tells the worker to append
@@ -187,6 +198,54 @@ fm_idle_compact_threshold_minutes() {  # <config-dir>
   esac
   [ "$line" -gt 0 ] || return 1
   printf '%s' "$line"
+}
+
+# Second non-empty, non-comment content line of <file> - the same trimming
+# and comment-skipping rule fm_idle_compact_first_content_line uses, advanced
+# past the first content line (the idle threshold). Prints nothing (return 0)
+# when the file is absent or has no second content line; that is not an error,
+# it is "no override", the same convention the threshold parser gives an
+# absent or empty file.
+fm_idle_compact_second_content_line() {  # <file>
+  local line seen_first=0
+  [ -f "$1" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [ -n "$line" ] || continue
+    case "$line" in '#'*) continue ;; esac
+    if [ "$seen_first" -eq 0 ]; then
+      seen_first=1
+      continue
+    fi
+    printf '%s' "$line"
+    return 0
+  done < "$1"
+  return 0
+}
+
+# Effective declared-state settle seconds (issue #34): how long the declared-
+# state fast path waits, after sending /compact, before ringing the worker.
+# config/idle-compact's optional SECOND content line is a whole positive
+# integer number of seconds; an absent file, an absent second line, or an
+# invalid value all fall back to the documented 60-second default - the same
+# "a config typo must never fail a watcher loop" contract the first line's
+# threshold-minutes parser already uses. Only the declared-state path reads
+# this: an ordinary (non-declared) episode keeps waiting a full sweep interval
+# per FM_IDLE_COMPACT_INTERVAL, since its worker's own pane activity is still
+# settling too, not just the compaction render.
+fm_idle_compact_declared_settle_secs() {  # <config-dir>
+  local config=$1 line
+  line=$(fm_idle_compact_second_content_line "$config/idle-compact")
+  case "$line" in
+    ''|*[!0-9]*) printf '%s' "$FM_IDLE_COMPACT_DECLARED_SETTLE_DEFAULT_SECS"; return 0 ;;
+  esac
+  if [ "$line" -gt 0 ]; then
+    printf '%s' "$line"
+  else
+    printf '%s' "$FM_IDLE_COMPACT_DECLARED_SETTLE_DEFAULT_SECS"
+  fi
+  return 0
 }
 
 # --- task context ------------------------------------------------------------
@@ -716,19 +775,26 @@ fm_idle_compact_advance_save_sent() {  # <state> <task> <marker> <threshold-minu
 # captured on a LATER sweep, one settle window after the send, so the
 # feature's own output is baked into the recorded signatures and never counts
 # as worker activity.
-fm_idle_compact_advance_settling() {  # <state> <task> <marker>
-  local state=$1 task=$2 marker=$3 settle_epoch settle_secs age declared
+fm_idle_compact_advance_settling() {  # <state> <task> <marker> [declared-settle-secs]
+  local state=$1 task=$2 marker=$3 declared_settle_secs=${4:-} settle_epoch settle_secs age declared
 
   fm_idle_compact_task_context "$state" "$task" || { rm -f "$marker"; return 0; }
   settle_epoch=$(fm_idle_compact_marker_field "$marker" settle_epoch)
   case "$settle_epoch" in
     ''|*[!0-9]*) rm -f "$marker"; return 0 ;;
   esac
-  settle_secs=${FM_IDLE_COMPACT_SETTLE_SECS:-${FM_IDLE_COMPACT_INTERVAL:-300}}
-  age=$(( $(date +%s) - settle_epoch ))
-  [ "$age" -ge "$settle_secs" ] || return 0
 
   declared=$(fm_idle_compact_marker_field "$marker" declared)
+  if [ "$declared" = 1 ]; then
+    case "$declared_settle_secs" in
+      ''|*[!0-9]*) declared_settle_secs=$FM_IDLE_COMPACT_DECLARED_SETTLE_DEFAULT_SECS ;;
+    esac
+    settle_secs=${FM_IDLE_COMPACT_SETTLE_SECS:-$declared_settle_secs}
+  else
+    settle_secs=${FM_IDLE_COMPACT_SETTLE_SECS:-${FM_IDLE_COMPACT_INTERVAL:-300}}
+  fi
+  age=$(( $(date +%s) - settle_epoch ))
+  [ "$age" -ge "$settle_secs" ] || return 0
 
   # A worker waiting on firstmate - not on an external event - is rung once,
   # right at the settling->done transition, so it never sits idle past its own
@@ -753,8 +819,8 @@ fm_idle_compact_advance_settling() {  # <state> <task> <marker>
 # One task through the 3-phase marker state machine. Never propagates a
 # failure to the caller: every branch that cannot proceed just returns 0 so a
 # sweep across many tasks never aborts early on one task's transient issue.
-fm_idle_compact_process_task() {  # <state> <task> <threshold-minutes>
-  local state=$1 task=$2 threshold_min=$3 marker phase status_sig pane_sig
+fm_idle_compact_process_task() {  # <state> <task> <threshold-minutes> [declared-settle-secs]
+  local state=$1 task=$2 threshold_min=$3 declared_settle=${4:-} marker phase status_sig pane_sig
   local cur_status cur_pane_sig cur_turnended
 
   marker=$(fm_idle_compact_marker_path "$state" "$task")
@@ -767,7 +833,7 @@ fm_idle_compact_process_task() {  # <state> <task> <threshold-minutes>
         return 0
         ;;
       settling)
-        fm_idle_compact_advance_settling "$state" "$task" "$marker"
+        fm_idle_compact_advance_settling "$state" "$task" "$marker" "$declared_settle"
         return 0
         ;;
       done)
@@ -838,10 +904,11 @@ fm_idle_compact_sweep_due() {  # <state>
 # cadence. Always returns 0: idle-compact is opt-in housekeeping and must
 # never fail a caller's loop.
 fm_idle_compact_tick() {  # <state> [config-dir]
-  local state=$1 config=${2:-$CONFIG} minutes meta task lock
+  local state=$1 config=${2:-$CONFIG} minutes declared_settle meta task lock
 
   minutes=$(fm_idle_compact_threshold_minutes "$config") || return 0
   fm_idle_compact_sweep_due "$state" || return 0
+  declared_settle=$(fm_idle_compact_declared_settle_secs "$config")
 
   # The watcher's main loop and the away-mode daemon's housekeeping tick both
   # call this against the same state dir, and the due-check above is
@@ -864,7 +931,7 @@ fm_idle_compact_tick() {  # <state> [config-dir]
   for meta in "$state"/*.meta; do
     [ -e "$meta" ] || continue
     task=$(basename "$meta"); task=${task%.meta}
-    fm_idle_compact_process_task "$state" "$task" "$minutes"
+    fm_idle_compact_process_task "$state" "$task" "$minutes" "$declared_settle"
   done
   fm_lock_release "$lock"
   return 0

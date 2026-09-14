@@ -158,6 +158,54 @@ test_config_zero_disabled() {
   pass "fm_idle_compact_threshold_minutes: zero disables the feature"
 }
 
+# --- config parsing (fm_idle_compact_declared_settle_secs, issue #34) -------
+
+test_declared_settle_absent_config_uses_60s_default() {
+  local dir out
+  dir=$(new_dir declared-settle-absent)
+  out=$(fm_idle_compact_declared_settle_secs "$dir/config")
+  [ "$out" = 60 ] || fail "an absent config/idle-compact must default the declared settle to 60s, got '$out'"
+  pass "fm_idle_compact_declared_settle_secs: absent config/idle-compact defaults to 60s"
+}
+
+test_declared_settle_first_line_only_uses_60s_default() {
+  local dir out
+  dir=$(new_dir declared-settle-first-only)
+  printf '30\n' > "$dir/config/idle-compact"
+  out=$(fm_idle_compact_declared_settle_secs "$dir/config")
+  [ "$out" = 60 ] || fail "a config with only the threshold-minutes line must default the declared settle to 60s, got '$out'"
+  pass "fm_idle_compact_declared_settle_secs: a config with no second content line defaults to 60s"
+}
+
+test_declared_settle_second_line_used_verbatim() {
+  local dir out
+  dir=$(new_dir declared-settle-valid)
+  printf '30\n  90  \n' > "$dir/config/idle-compact"
+  out=$(fm_idle_compact_declared_settle_secs "$dir/config")
+  [ "$out" = 90 ] || fail "expected the configured second-line value 90 (whitespace-trimmed), got '$out'"
+  pass "fm_idle_compact_declared_settle_secs: a valid second content line is used verbatim, whitespace-trimmed"
+}
+
+test_declared_settle_second_line_skips_comments_and_blanks() {
+  local dir out
+  dir=$(new_dir declared-settle-comments)
+  printf '# leading comment\n30\n\n# another comment\n120\n' > "$dir/config/idle-compact"
+  out=$(fm_idle_compact_declared_settle_secs "$dir/config")
+  [ "$out" = 120 ] || fail "expected the second CONTENT line 120 (comments and blanks skipped), got '$out'"
+  pass "fm_idle_compact_declared_settle_secs: comment and blank lines do not count as content lines"
+}
+
+test_declared_settle_invalid_second_line_uses_60s_default() {
+  local dir val out
+  dir=$(new_dir declared-settle-invalid)
+  for val in abc -5 1.5 0; do
+    printf '30\n%s\n' "$val" > "$dir/config/idle-compact"
+    out=$(fm_idle_compact_declared_settle_secs "$dir/config")
+    [ "$out" = 60 ] || fail "invalid second-line value '$val' must fall back to the 60s default, got '$out'"
+  done
+  pass "fm_idle_compact_declared_settle_secs: an invalid second-line value falls back to the 60s default, never fails the caller"
+}
+
 # --- eligibility (fm_idle_compact_eligible) ---------------------------------
 
 test_eligible_excludes_secondmate() {
@@ -583,6 +631,149 @@ test_settling_ordinary_path_rings_a_worker_still_declaring_the_pause() {
     grep -q 'compacted - start the validation run now' "$log" \
       || fail "a worker whose status still declares the compaction pause must be rung whichever path the episode took"
     pass "fm_idle_compact_process_task: the ordinary path also rings a worker whose status still declares the compaction pause"
+  ) || exit 1
+}
+
+test_settling_declared_default_60s_not_yet_elapsed_stays_settling() {
+  (
+    local dir log marker
+    dir=$(new_dir sm-declared-default-wait)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    # settle_epoch 10s ago: inside the 60s declared default, so no explicit
+    # FM_IDLE_COMPACT_SETTLE_SECS override and no declared-settle-secs arg -
+    # this is the fast path's own default, not a test-forced value.
+    fm_idle_compact_marker_write "$marker" phase=settling "settle_epoch=$(( $(date +%s) - 10 ))" declared=1
+
+    fm_idle_compact_process_task "$dir/state" t1 30
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'settling' ] \
+      || fail "10s into the 60s declared default the episode must still be waiting, not already rung"
+    [ ! -s "$log" ] || fail "nothing should be sent before the declared settle window elapses"
+    pass "fm_idle_compact_process_task: the declared path's own 60s default is not satisfied by a 10s-old settle_epoch"
+  ) || exit 1
+}
+
+test_settling_declared_default_60s_elapsed_rings_worker() {
+  (
+    local dir log marker
+    dir=$(new_dir sm-declared-default-ring)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    # settle_epoch 61s ago, past the 60s declared default - no
+    # FM_IDLE_COMPACT_SETTLE_SECS override and no declared-settle-secs arg.
+    fm_idle_compact_marker_write "$marker" phase=settling "settle_epoch=$(( $(date +%s) - 61 ))" declared=1
+
+    fm_idle_compact_process_task "$dir/state" t1 30
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
+      || fail "past the 60s declared default the episode must advance to phase=done without any override"
+    grep -q 'compacted - start the validation run now' "$log" \
+      || fail "the ring must go out once the default declared settle window elapses"
+    pass "fm_idle_compact_process_task: the declared path rings on its own 60s default with no config or env override"
+  ) || exit 1
+}
+
+test_settling_declared_configured_settle_secs_honored() {
+  (
+    local dir log marker
+    dir=$(new_dir sm-declared-configured)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    fm_idle_compact_marker_write "$marker" phase=settling "settle_epoch=$(( $(date +%s) - 10 ))" declared=1
+
+    # A configured declared-settle-secs of 5, passed as fm_idle_compact_tick
+    # would (config/idle-compact's second content line) - 10s past send is
+    # already past a 5s window.
+    fm_idle_compact_process_task "$dir/state" t1 30 5
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
+      || fail "a configured declared-settle-secs of 5 must be honored over the 60s built-in default"
+    grep -q 'compacted - start the validation run now' "$log" \
+      || fail "the ring must go out once the configured declared settle window elapses"
+    pass "fm_idle_compact_process_task: a configured declared-settle-secs argument overrides the 60s built-in default"
+  ) || exit 1
+}
+
+test_settling_declared_configured_settle_secs_not_yet_elapsed() {
+  (
+    local dir log marker
+    dir=$(new_dir sm-declared-configured-wait)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    fm_idle_compact_marker_write "$marker" phase=settling "settle_epoch=$(( $(date +%s) - 10 ))" declared=1
+
+    # A configured declared-settle-secs of 120 must extend PAST the 60s
+    # built-in default, not just leave it in place.
+    fm_idle_compact_process_task "$dir/state" t1 30 120
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'settling' ] \
+      || fail "a configured declared-settle-secs of 120 must be honored even though it exceeds the 60s built-in default"
+    [ ! -s "$log" ] || fail "nothing should be sent before the configured declared settle window elapses"
+    pass "fm_idle_compact_process_task: a configured declared-settle-secs argument can extend past the 60s built-in default"
+  ) || exit 1
+}
+
+test_settling_ordinary_path_ignores_declared_settle_arg() {
+  (
+    local dir log marker
+    dir=$(new_dir sm-ordinary-ignores-declared-settle)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600
+    log="$dir/sends.log"; : > "$log"
+    stub_always_safe
+    stub_recording_send "$log"
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: parked")
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    # No declared=1: an ordinary episode. A tiny declared-settle-secs arg (5)
+    # must NOT shorten the ordinary path's own FM_IDLE_COMPACT_INTERVAL wait.
+    fm_idle_compact_marker_write "$marker" phase=settling "settle_epoch=$(( $(date +%s) - 10 ))"
+
+    FM_IDLE_COMPACT_INTERVAL=3600 fm_idle_compact_process_task "$dir/state" t1 30 5
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'settling' ] \
+      || fail "the ordinary path's settle wait must come from FM_IDLE_COMPACT_INTERVAL, never the declared-settle-secs arg"
+    [ ! -s "$log" ] || fail "an ordinary episode must not send anything before its own interval elapses"
+    pass "fm_idle_compact_process_task: the declared-settle-secs argument is scoped to declared episodes only"
+  ) || exit 1
+}
+
+test_tick_computes_and_threads_declared_settle_from_config() {
+  (
+    local dir marker
+    dir=$(new_dir tick-declared-settle-config)
+    write_task_meta "$dir/state" t1
+    touch_status "$dir/state" t1 3600
+    stub_always_safe
+    # shellcheck disable=SC2329 # invoked indirectly through fm_idle_compact_send
+    fm_idle_compact_send() { return 0; }
+    FM_IDLE_COMPACT_CREW_STATE_BIN=$(write_crew_state_stub "$dir" "state: paused")
+    marker=$(fm_idle_compact_marker_path "$dir/state" t1)
+    fm_idle_compact_marker_write "$marker" phase=settling "settle_epoch=$(( $(date +%s) - 10 ))" declared=1
+    # Threshold minutes on the first content line, declared-settle-secs 5 on
+    # the second - fm_idle_compact_tick must read both from the same file and
+    # thread the second through to the settling transition.
+    printf '30\n5\n' > "$dir/config/idle-compact"
+
+    fm_idle_compact_tick "$dir/state" "$dir/config"
+    [ "$(fm_idle_compact_marker_field "$marker" phase)" = 'done' ] \
+      || fail "fm_idle_compact_tick must read config/idle-compact's second content line and honor it as the declared settle seconds"
+    pass "fm_idle_compact_tick: reads the declared-settle-secs override from config/idle-compact and threads it through"
   ) || exit 1
 }
 
@@ -1537,6 +1728,12 @@ test_config_invalid_value_disabled
 test_config_whitespace_only_line_is_treated_as_empty
 test_config_zero_disabled
 
+test_declared_settle_absent_config_uses_60s_default
+test_declared_settle_first_line_only_uses_60s_default
+test_declared_settle_second_line_used_verbatim
+test_declared_settle_second_line_skips_comments_and_blanks
+test_declared_settle_invalid_second_line_uses_60s_default
+
 test_eligible_excludes_secondmate
 test_eligible_excludes_non_claude_harness
 test_eligible_excludes_idle_too_young
@@ -1563,6 +1760,12 @@ test_settling_declared_rings_worker_on_done
 test_settling_declared_unsafe_pane_still_rings
 test_settling_declared_send_failure_stays_settling
 test_settling_ordinary_path_rings_a_worker_still_declaring_the_pause
+test_settling_declared_default_60s_not_yet_elapsed_stays_settling
+test_settling_declared_default_60s_elapsed_rings_worker
+test_settling_declared_configured_settle_secs_honored
+test_settling_declared_configured_settle_secs_not_yet_elapsed
+test_settling_ordinary_path_ignores_declared_settle_arg
+test_tick_computes_and_threads_declared_settle_from_config
 test_settling_non_declared_never_rings_worker
 test_savesent_no_turnended_yet_stays_savesent
 test_savesent_turnended_advanced_sends_compact_and_marks_settling
