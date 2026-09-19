@@ -468,8 +468,10 @@ test_ship_briefs_forbid_manual_issue_close_and_board_edits() {
   done
 
   brief="$home/data/brief-noclose-nm/brief.md"
-  assert_grep "Carry forward this brief's ban on \`gh issue close\`, \`gh issue reopen\`, and \`gh project\` commands so pipeline seats inherit it." "$brief" \
-    "no-mistakes DOD must tell the worker to carry the manual-close ban into --intent"
+  assert_grep "Append this sentence to the \`--intent\` string you pass to no-mistakes" "$brief" \
+    "no-mistakes DOD must tell the worker to append the manual-close ban into --intent"
+  assert_grep "the one exception to the exclusion above" "$brief" \
+    "no-mistakes DOD must mark the manual-close ban as an explicit exception to the --intent exclusion rule"
 
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-noclose-scout some-proj --scout >/dev/null 2>&1
   brief="$home/data/brief-noclose-scout/brief.md"

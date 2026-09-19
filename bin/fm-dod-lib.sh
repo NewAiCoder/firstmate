@@ -288,7 +288,7 @@ Three firstmate-specific rules layer on top of that guidance:
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
 - NEVER pass \`--yes\` (or \`-y\`) to \`no-mistakes axi run\` or \`no-mistakes axi respond\`. It is banned fleet-wide.
   It auto-resolves every gate including ask-user findings with no escalation, and answering your own ask-user finding is a hard rule violation.
-- Carry forward this brief's ban on \`gh issue close\`, \`gh issue reopen\`, and \`gh project\` commands so pipeline seats inherit it. Issues close through the PR body's \`closes #N\` on merge, and the project board is not used.
+- Append this sentence to the \`--intent\` string you pass to no-mistakes, verbatim, as the one exception to the exclusion above: "Never run \`gh issue close\`, \`gh issue reopen\`, or any \`gh project\` command - issues close through the PR body's \`closes #N\` on merge, and the project board is not used." The pipeline's own build/review/fix seats are spawned from \`--intent\` alone and never see this brief, so appending it there is the only way they inherit the ban; this is in addition to, not instead of, your own obligation under rule 8 above.
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: PR {url} checks green\` and stop. You are finished.
 EOF
