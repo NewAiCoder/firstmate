@@ -123,6 +123,22 @@ fm_poll_derived_grace() {
   printf '%s\n' "$derived"
 }
 
+# fm_claude_park_seconds
+# The Claude Stop auto-arm park boundary: how long one Stop-owned watcher park
+# may run before bin/fm-claude-stop-autoarm.sh closes it itself. The hook is
+# registered with "timeout": 28800 in .claude/settings.json, and Claude TERMs
+# the whole hook process tree at that timeout without delivering any rewake, so
+# the boundary must fall below it. Prints FM_CLAUDE_PARK_SECONDS when it is a
+# whole number from 1 to 28799, otherwise the 27000 default. The hook measures
+# it with a relative sleep; wall-clock arithmetic can drift from Claude's
+# monotonic timer by several percent on hosts whose clock is stepped backwards.
+fm_claude_park_seconds() {
+  local park=${FM_CLAUDE_PARK_SECONDS:-27000}
+  case "$park" in ''|*[!0-9]*|0) park=27000 ;; esac
+  [ "$park" -lt 28800 ] || park=27000
+  printf '%s\n' "$park"
+}
+
 # fm_last_activity_age <now-epoch> <file>...
 # Seconds since the NEWEST mtime among <file>..., the "last activity" basis for
 # a task: a crewmate is only as idle as its most recent durable trace, so any
@@ -1430,7 +1446,10 @@ fm_failure_episode_reset() {
 #     ledger entry and the watcher beacon (state/.last-watcher-beat) are older
 #     than the guard grace, which proves the owner hung mid-arm with nothing
 #     supervising (every legitimate arming phase with no watcher is bounded in
-#     seconds, while a healthy hours-long cycle keeps the beacon beating).
+#     seconds, while a healthy hours-long cycle keeps the beacon beating) - nor
+#     EXPIRED, meaning the ledger entry is older than fm_claude_park_seconds:
+#     a current owner closes its park before then, so an older claim is an
+#     owner the harness hook timeout is about to kill without any rewake.
 #   - Every firing DEFERS (exits 0) to an open claim; anything else - a
 #     terminal outcome, a dead or identity-mismatched owner, a stuck owner, an
 #     identityless entry, or no claim at all - lets the next firing take
@@ -1534,7 +1553,7 @@ fm_autoarm_ledger_read() {  # <state-dir>
 # build's entry gets its deference from its held role-carrying lock through
 # the legacy shim, and anything else must not defer.
 fm_autoarm_claim_open() {  # <state-dir> [grace]
-  local state=$1 grace=${2:-${FM_GUARD_GRACE:-300}} epoch current
+  local state=$1 grace=${2:-${FM_GUARD_GRACE:-300}} epoch current age
   epoch="$state/.claude-autoarm-epoch"
   case "$grace" in
     ''|*[!0-9]*|0) grace=300 ;;
@@ -1546,7 +1565,9 @@ fm_autoarm_claim_open() {  # <state-dir> [grace]
   current=$(fm_pid_identity "$FM_AUTOARM_OWNER" 2>/dev/null) || return 1
   [ -n "$current" ] || return 1
   [ "$current" = "$FM_AUTOARM_IDENTITY" ] || return 1
-  if [ "$(fm_path_age "$epoch")" -ge "$grace" ] \
+  age=$(fm_path_age "$epoch")
+  [ "$age" -lt "$(fm_claude_park_seconds)" ] || return 1
+  if [ "$age" -ge "$grace" ] \
     && [ "$(fm_path_age "$state/.last-watcher-beat")" -ge "$grace" ]; then
     return 1
   fi

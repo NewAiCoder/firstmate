@@ -1488,7 +1488,8 @@ test_hook_claude_mode_allows_on_open_generation_claim() {
   identity=$(fm_test_pid_identity "$pid") || fail "could not compute a claim pid-identity"
   printf 'epoch=464 owner_pid=%s outcome=arming updated_at=1\n%s\n' "$pid" "$identity" \
     > "$dir/state/.claude-autoarm-epoch"
-  touch -t 202001010000 "$dir/state/.claude-autoarm-epoch"
+  # Past grace but inside the park boundary: a healthy hours-long park.
+  fm_touch_epoch "$(( $(date +%s) - 3600 ))" "$dir/state/.claude-autoarm-epoch"
   : > "$dir/state/.last-watcher-beat"
   [ ! -e "$dir/state/.claude-autoarm.lock" ] || fail "this case must start with no owner lock at all"
   out=$(run_hook_claude "$dir" false); status=$?

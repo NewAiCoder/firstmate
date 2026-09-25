@@ -58,6 +58,11 @@
 # watcher. NEVER `pkill -f
 # bin/fm-watch.sh`: that pattern matches every firstmate home's watcher
 # (secondmate homes run the same script) and would kill siblings.
+#
+# --stop: the same home-scoped stop without a re-arm. Prints
+# `watcher: stopped` once no watcher of this home is running, or
+# `watcher: FAILED - this home's watcher did not stop` and exits nonzero. The
+# Claude Stop auto-arm uses it at its park boundary.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -388,6 +393,7 @@ handling_watcher_pid=
 case "${1:-}" in
   ''|arm|--arm) mode=arm ;;
   --restart) mode=restart ;;
+  --stop) mode=stop ;;
   --handling-delivered)
     mode=handling-delivered
     handling_generation=${2:-}
@@ -397,7 +403,7 @@ case "${1:-}" in
     case "$handling_watcher_pid" in ''|*[!0-9]*) echo "watcher: invalid successor watcher pid" >&2; exit 2 ;; esac
     [ "$#" -eq 4 ] || { echo "watcher: unexpected handling delivery arguments" >&2; exit 2; }
     ;;
-  *) echo "usage: $(basename "$0") [--restart | --handling-delivered GENERATION --watcher-pid PID]" >&2; exit 2 ;;
+  *) echo "usage: $(basename "$0") [--restart | --stop | --handling-delivered GENERATION --watcher-pid PID]" >&2; exit 2 ;;
 esac
 
 if [ "$mode" = handling-delivered ]; then
@@ -407,26 +413,45 @@ if [ "$mode" = handling-delivered ]; then
   exit $?
 fi
 
-if [ "$mode" = restart ]; then
-  # Home-scoped stop: only the watcher pid recorded in THIS home's lock.
+# Home-scoped stop: only the watcher pid recorded in THIS home's lock, waiting
+# up to <tenths> tenths of a second for it to exit. Returns 1 when the watcher
+# outlives the wait and 2 when stale-lock recovery state cannot be persisted.
+stop_home_watcher() {  # <tenths>
+  local limit=$1 lock_pid i
   lock_pid=$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)
-  if fm_pid_alive "$lock_pid"; then
-    if fm_watcher_lock_matches_pid "$STATE" "$WATCH" "$lock_pid" "$FM_HOME"; then
-      kill -TERM "$lock_pid" 2>/dev/null || true
-      # Wait for it to actually exit before relaunching, so the fresh watcher
-      # either takes a released lock or reclaims a now-dead-pid stale lock instead
-      # of seeing the dying one as a live holder and no-opping.
-      i=0
-      while [ "$i" -lt 50 ] && fm_pid_alive "$lock_pid"; do
-        sleep 0.1
-        i=$((i + 1))
-      done
-    else
-      if ! clear_stale_recorded_watcher_lock; then
-        echo "watcher: FAILED - stale watcher recovery state could not be persisted" >&2
-        exit 1
-      fi
-    fi
+  fm_pid_alive "$lock_pid" || return 0
+  if ! fm_watcher_lock_matches_pid "$STATE" "$WATCH" "$lock_pid" "$FM_HOME"; then
+    clear_stale_recorded_watcher_lock || return 2
+    return 0
+  fi
+  kill -TERM "$lock_pid" 2>/dev/null || true
+  i=0
+  while [ "$i" -lt "$limit" ] && fm_pid_alive "$lock_pid"; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  ! fm_pid_alive "$lock_pid"
+}
+
+if [ "$mode" = stop ]; then
+  # The watcher defers TERM until its current poll step returns, so allow a
+  # full default poll plus margin before reporting the stop as failed.
+  if stop_home_watcher 300; then
+    echo "watcher: stopped"
+    exit 0
+  fi
+  echo "watcher: FAILED - this home's watcher did not stop"
+  exit 1
+fi
+
+if [ "$mode" = restart ]; then
+  # Wait for the old watcher to actually exit before relaunching, so the fresh
+  # watcher either takes a released lock or reclaims a now-dead-pid stale lock
+  # instead of seeing the dying one as a live holder and no-opping.
+  stop_home_watcher 50
+  if [ $? -eq 2 ]; then
+    echo "watcher: FAILED - stale watcher recovery state could not be persisted" >&2
+    exit 1
   fi
 fi
 

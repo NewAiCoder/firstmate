@@ -32,12 +32,24 @@
 #     continuation (fm_autoarm_claim_open/fm_autoarm_claim_next in
 #     bin/fm-wake-lib.sh own the contract, including the legacy shim for a
 #     pre-generation lock).
-#   - Foreground arm: the owner runs bin/fm-watch-arm.sh in the FOREGROUND of
-#     this hook-owned process tree (never shell &); Claude owns the process
-#     group, so its timeout/session teardown kills arm and watcher together.
+#   - Tracked arm: the owner runs bin/fm-watch-arm.sh as a child it waits on
+#     inside this hook-owned process tree (never a fire-and-forget shell &);
+#     Claude owns the process group, so its timeout/session teardown kills
+#     arm and watcher together.
+#   - Park boundary: Claude TERMs this hook at the registered "timeout": 28800
+#     and delivers no rewake for a hook it timed out, while a quiet fleet can
+#     keep one watcher park alive for longer because no-change heartbeats are
+#     absorbed. So the owner closes its own park after fm_claude_park_seconds
+#     (bin/fm-wake-lib.sh owns the value), measured by a relative sleep that a
+#     stepped wall clock cannot stretch: it TERMs its arm, stops this home's
+#     watcher through bin/fm-watch-arm.sh --stop, and translates the close into
+#     one ordinary exit-2 rewake, so the handling turn's Stop starts a fresh
+#     park. An arming claim older than that boundary is no longer open, so a
+#     Stop that lands near the end of an old park supersedes it.
 #   - Translation: while supervision is still needed and AFK remains inactive,
-#     an actionable arm close (signal:/stale:/check:/heartbeat) prints one
-#     rewake banner to stderr and exits 2, which wakes Claude even while idle
+#     an actionable arm close (signal:/stale:/check:/heartbeat) or a park
+#     boundary prints one rewake banner to stderr and exits 2, which wakes
+#     Claude even while idle
 #     ("Stop hook feedback"). The irrevocable commit point is the EXIT STATUS:
 #     the harness delivers the collected stderr only on exit 2, so an owned
 #     terminal commit decides the exit. Markerless outcomes commit with the
@@ -212,18 +224,55 @@ autoarm_record() {  # <outcome>
 # shellcheck source=/dev/null
 [ -f "$CONFIG/x-mode.env" ] && . "$CONFIG/x-mode.env"
 
-# --- foreground the real arm wrapper ------------------------------------------
-# NO shell &: this hook process tree is the harness-owned lifecycle. The arm
-# forks the watcher as its own tracked child exactly as it does for the
-# model-driven background-task path, and propagates the wake reason on close.
-# Every non-actionable close is checked against the same identity-matched live
-# watcher and fresh-beacon predicate used by the turn-end guard before it is
-# retried or translated into an operator-visible failure.
+# --- park boundary timer --------------------------------------------------------
+# A relative sleep, not wall-clock arithmetic, so a stepped clock cannot carry
+# the park past the hook timeout (header "Park boundary"). The timer signals
+# this hook with USR1; the trap records the boundary and TERMs the running arm,
+# whose own handler stops the watcher it started. The timer holds none of the
+# hook's stdio, so it can never delay Claude's read of an exit-2 banner, and it
+# is stopped on every exit.
+PARK_SECONDS=$(fm_claude_park_seconds)
+HOOK_PID=${BASHPID:-$$}
+ARM_PID=
+PARKED=0
+PARK_TIMER=
+
+# shellcheck disable=SC2329 # Invoked indirectly by the USR1 trap below.
+park_boundary_reached() {
+  PARKED=1
+  [ -z "$ARM_PID" ] || kill -TERM "$ARM_PID" 2>/dev/null || true
+}
+
+# shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap below.
+stop_park_timer() {
+  [ -z "$PARK_TIMER" ] || kill -TERM "$PARK_TIMER" 2>/dev/null || true
+}
+
+trap park_boundary_reached USR1
+trap stop_park_timer EXIT
+(
+  park_sleep=
+  trap '[ -z "$park_sleep" ] || kill -TERM "$park_sleep" 2>/dev/null; exit 0' TERM
+  sleep "$PARK_SECONDS" &
+  park_sleep=$!
+  wait "$park_sleep" && kill -USR1 "$HOOK_PID" 2>/dev/null
+) </dev/null >/dev/null 2>&1 &
+PARK_TIMER=$!
+
+# --- run the real arm wrapper as a tracked child ----------------------------------
+# This hook process tree is the harness-owned lifecycle, and the hook waits on
+# the arm it starts - never fire-and-forget. The arm forks the watcher as its
+# own tracked child exactly as it does for the model-driven background-task
+# path, and propagates the wake reason on close. Every non-actionable close is
+# checked against the same identity-matched live watcher and fresh-beacon
+# predicate used by the turn-end guard before it is retried or translated into
+# an operator-visible failure; a close caused by the park boundary is not.
 OUT=
 ACTIONABLE=0
 HEALTHY=0
 attempt=0
 while [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ]; do
+  [ "$PARKED" -eq 0 ] || break
   # A superseded owner must not start or attach another watcher or mutate any
   # watcher/wake state: re-verify generation ownership before every arm
   # invocation, first attempt and retries alike.
@@ -237,10 +286,18 @@ while [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ]; do
   # computed above) so the arm wrapper - and the watcher it may start - judge
   # beacon staleness with the exact same value this hook just judged it with.
   if [ -n "$OUT" ]; then
-    FM_GUARD_GRACE="$GRACE" "$SCRIPT_DIR/fm-watch-arm.sh" >"$OUT" 2>&1 || true
+    FM_GUARD_GRACE="$GRACE" "$SCRIPT_DIR/fm-watch-arm.sh" >"$OUT" 2>&1 &
   else
-    FM_GUARD_GRACE="$GRACE" "$SCRIPT_DIR/fm-watch-arm.sh" >/dev/null 2>&1 || true
+    FM_GUARD_GRACE="$GRACE" "$SCRIPT_DIR/fm-watch-arm.sh" >/dev/null 2>&1 &
   fi
+  ARM_PID=$!
+  [ "$PARKED" -eq 0 ] || kill -TERM "$ARM_PID" 2>/dev/null || true
+  # The USR1 trap interrupts wait; keep waiting until the arm has really exited.
+  while :; do
+    wait "$ARM_PID" 2>/dev/null
+    kill -0 "$ARM_PID" 2>/dev/null || break
+  done
+  ARM_PID=
 
   # AFK may have appeared mid-cycle: the daemon owns triage now, so suppress
   # every subsequent classification and handoff.
@@ -255,6 +312,7 @@ while [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ]; do
     grep -Eq '^(signal:|stale:|check:|heartbeat($|:))' "$OUT" 2>/dev/null && ACTIONABLE=1
   fi
   [ "$ACTIONABLE" -eq 1 ] && break
+  [ "$PARKED" -eq 0 ] || break
 
   # A non-actionable close is benign when another verified watcher already owns
   # this home and is still beating within the shared grace window.
@@ -322,6 +380,31 @@ if [ "$ACTIONABLE" -eq 1 ]; then
   fi
   [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
   exit 0
+fi
+
+# A park boundary closes this park as an ordinary wake. The arm already stopped
+# a watcher it started; an attached peer is stopped through the home-scoped
+# path, so the stopped watcher publishes the downtime the rewake binds to. A
+# rewake this owner cannot commit falls through to the failure notice below,
+# because the watcher is gone and only an exit 2 brings the next Stop.
+if [ "$PARKED" -eq 1 ]; then
+  if ! fm_autoarm_still_owner "$STATE" "$MY_GEN"; then
+    [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
+    exit 0
+  fi
+  "$SCRIPT_DIR/fm-watch-arm.sh" --stop >/dev/null 2>&1 || true
+  {
+    printf 'firstmate watcher park boundary - this supervision cycle ran %s seconds and closed itself before the Stop hook timeout could end it silently.\n' "$PARK_SECONDS"
+    printf 'Run bin/fm-wake-drain.sh first, handle anything it presents, then run its exact WAKE_ACK_REQUIRED --ack-through command. When this turn ends, the next needed cycle arms automatically - do NOT run bin/fm-watch-arm.sh.\n'
+  } >&2
+  if autoarm_commit rewake; then
+    [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
+    exit 2
+  fi
+  if ! fm_autoarm_still_owner "$STATE" "$MY_GEN"; then
+    [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
+    exit 0
+  fi
 fi
 
 # Notify only once for this continuous failure episode; every later invocation

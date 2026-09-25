@@ -841,6 +841,30 @@ test_arm_refuses_an_unusable_launch_confirm_window() {
   pass "watch-arm: an unusable launch confirm window refuses to arm by name"
 }
 
+# --stop is the Claude auto-arm's park-boundary stop for a watcher it does not
+# own: it must stop exactly this home's live watcher, leave the downtime the
+# next rewake binds to, and never start a replacement.
+test_stop_ends_this_homes_watcher_without_rearming() {
+  local dir state fakebin out stopout status
+  dir=$(make_case stop-home-watcher)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  stopout="$dir/stop.out"
+  start_seed_watcher "$state" "$fakebin" "$out"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" "$WATCH_ARM" --stop > "$stopout" 2>&1
+  status=$?
+  expect_code 0 "$status" "--stop must succeed once this home's watcher has exited"
+  grep -qx 'watcher: stopped' "$stopout" || fail "--stop did not report the stop: $(cat "$stopout")"
+  wait_for_exit "$SEED_PID" 5
+  [ $? -ne 124 ] || fail "--stop returned while this home's watcher was still running"
+  grep -q '^pending:downtime:' "$state/.watcher-down" \
+    || fail "a stopped watcher left no downtime for the rewake to bind: $(cat "$state/.watcher-down" 2>/dev/null)"
+  [ ! -e "$state/.watch.lock" ] || ! kill -0 "$(cat "$state/.watch.lock/pid" 2>/dev/null || echo 0)" 2>/dev/null \
+    || fail "--stop started a replacement watcher"
+  pass "watch-arm: --stop ends this home's watcher, publishes downtime, and does not re-arm"
+}
+
 test_attached_arm_reports_the_delivered_wake
 test_attached_arm_reports_the_delivered_wake_after_drain
 test_arm_refuses_an_unusable_launch_confirm_window
@@ -856,3 +880,4 @@ test_markerless_legacy_queue_is_recovered_on_arm
 test_handling_window_close_keeps_the_acknowledgement_valid
 test_moved_generation_acknowledgement_is_self_healing
 test_downtime_marker_does_not_follow_symlink
+test_stop_ends_this_homes_watcher_without_rearming

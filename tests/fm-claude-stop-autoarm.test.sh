@@ -140,6 +140,35 @@ printf 'signal: task.status done: slow fixture\n'
 exit 0
 SH
       ;;
+    quiet-park)
+      # A healthy watcher park on a quiet fleet: it beats forever and never
+      # closes on its own. TERM is the only way out, and closing publishes the
+      # downtime the real watcher publishes on exit. --stop records the
+      # home-scoped stop call.
+      cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --stop ]; then
+  echo "$$" >> "$FM_HOME/state/stop-ran"
+  echo "watcher: stopped"
+  exit 0
+fi
+echo "$$" >> "$FM_HOME/state/arm-ran"
+trap 'printf "pending:downtime:fixture-generation\n" > "$FM_HOME/state/.watcher-down"; echo "$$" >> "$FM_HOME/state/arm-termed"; exit 143' TERM
+touch "$FM_HOME/state/.last-watcher-beat"
+printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
+# Give up after about 30 seconds so a hook that never reaches its boundary
+# fails the test instead of hanging the suite.
+i=0
+while [ "$i" -lt 150 ]; do
+  touch "$FM_HOME/state/.last-watcher-beat"
+  sleep 0.2 &
+  wait "$!"
+  i=$((i + 1))
+done
+printf 'watcher: FAILED - fixture park was never closed\n'
+exit 1
+SH
+      ;;
     blocking-actionable)
       cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
@@ -1055,7 +1084,8 @@ test_open_generation_claim_defers_without_any_lock() {
   sleep 60 &
   pid=$!
   record_autoarm_v2_claim "$dir" 464 "$pid" arming "$pid" || fail "could not record a v2 claim"
-  touch -t 202001010000 "$dir/state/.claude-autoarm-epoch"
+  # Past grace but inside the park boundary: a healthy hours-long park.
+  fm_touch_epoch "$(( $(date +%s) - 3600 ))" "$dir/state/.claude-autoarm-epoch"
   : > "$dir/state/.last-watcher-beat"
   assert_absent "$dir/state/.claude-autoarm.lock" "this case must start with no owner lock at all"
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
@@ -1230,6 +1260,64 @@ test_long_poll_grace_reaches_arm_wrapper() {
   pass "auto-arm: a long FM_POLL with FM_GUARD_GRACE unset reaches fm-watch-arm.sh with the derived grace"
 }
 
+# The 2026-09-25 outage: a quiet fleet absorbs every no-change heartbeat, so one
+# Stop-owned park outlived the hook's "timeout": 28800 and Claude killed it with
+# no rewake, leaving the home unsupervised until a human typed. The park must
+# close itself at the boundary as an ordinary rewake instead.
+test_park_boundary_closes_quiet_park_with_rewake() {
+  local dir out status started elapsed
+  dir=$(make_primary_dir "$TMP_ROOT/park-boundary")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" quiet-park
+  started=$(date +%s)
+  out=$(FM_CLAUDE_PARK_SECONDS=2 run_autoarm "$dir" 2>/dev/null); status=$?
+  elapsed=$(( $(date +%s) - started ))
+  expect_code 2 "$status" "a park boundary must close the park with the rewake-triggering exit"
+  [ "$elapsed" -lt 30 ] || fail "the park boundary did not end the park promptly: ${elapsed}s"
+  [ -s "$dir/state/arm-termed" ] || fail "the park boundary did not stop the running arm"
+  [ -s "$dir/state/stop-ran" ] || fail "the park boundary did not run the home-scoped watcher stop"
+  [ "$(wc -l < "$dir/state/arm-ran" | tr -d ' ')" = 1 ] \
+    || fail "the park boundary retried the arm instead of closing: $(wc -l < "$dir/state/arm-ran")"
+  [ "$(epoch_outcome "$dir")" = rewake ] \
+    || fail "the park boundary left a nonterminal ledger outcome: $(sed -n '1p' "$dir/state/.claude-autoarm-epoch")"
+  assert_contains "$out" "firstmate watcher park boundary" "the park boundary omitted its rewake banner"
+  assert_absent "$dir/state/.claude-autoarm-failure-notified" "a park boundary is not an auto-arm failure"
+  pass "auto-arm: a quiet park closes itself at the boundary with one exit-2 rewake"
+}
+
+# The race behind the same outage: a Stop that lands just before an old park is
+# killed must not defer to it. A live, identity-matched arming claim with a fresh
+# beacon but a ledger entry older than the park boundary is superseded.
+test_expired_arming_claim_is_superseded() {
+  local dir out status pid
+  dir=$(make_primary_dir "$TMP_ROOT/v2-expired-claim")
+  : > "$dir/state/task1.meta"
+  write_arm_fixture "$dir" actionable
+  sleep 60 &
+  pid=$!
+  record_autoarm_v2_claim "$dir" 464 "$pid" arming "$pid" || fail "could not record a v2 claim"
+  fm_touch_epoch "$(( $(date +%s) - 28000 ))" "$dir/state/.claude-autoarm-epoch"
+  : > "$dir/state/.last-watcher-beat"
+  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 2 "$status" "an arming claim past the park boundary must be superseded, not deferred to"
+  [ -e "$dir/state/arm-ran" ] || fail "an expired claim kept the home from arming"
+  [ "$(epoch_field "$dir" epoch)" -gt 464 ] || fail "superseding an expired claim did not advance the ledger"
+  pass "auto-arm: an arming claim older than the park boundary is superseded even with a fresh beacon"
+}
+
+test_park_seconds_stays_below_hook_timeout() {
+  local lib=$ROOT/bin/fm-wake-lib.sh value got
+  for value in '' abc 0 28800 99999; do
+    got=$(FM_CLAUDE_PARK_SECONDS=$value bash -c '. "$1"; fm_claude_park_seconds' _ "$lib")
+    [ "$got" = 27000 ] || fail "FM_CLAUDE_PARK_SECONDS='$value' must fall back to 27000, got '$got'"
+  done
+  got=$(FM_CLAUDE_PARK_SECONDS=600 bash -c '. "$1"; fm_claude_park_seconds' _ "$lib")
+  [ "$got" = 600 ] || fail "a valid FM_CLAUDE_PARK_SECONDS must be honored, got '$got'"
+  pass "auto-arm: the park boundary is always below the registered 28800s hook timeout"
+}
+
 test_fm_lock_status_still_works_with_shared_lib() {
   local out
   out=$(FM_HOME="$TMP_ROOT/lock-status-home" bash "$ROOT/bin/fm-lock.sh" status 2>&1)
@@ -1278,4 +1366,7 @@ test_need_vanished_mid_cycle_closes_quietly
 test_afk_mid_cycle_suppresses_rewake
 test_active_in_marked_secondmate_home
 test_long_poll_grace_reaches_arm_wrapper
+test_park_boundary_closes_quiet_park_with_rewake
+test_expired_arming_claim_is_superseded
+test_park_seconds_stays_below_hook_timeout
 test_fm_lock_status_still_works_with_shared_lib
