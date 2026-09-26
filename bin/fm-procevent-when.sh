@@ -201,7 +201,7 @@ cmd_arm() {
   # the bad-mode case - a state root owned by another user, or reached through
   # a symlinked ancestor, stays broken after that chmod with no hint why.
   local state_root_reason
-  state_root_reason=$(fm_procevent_private_directory_diagnose "$STATE" 0)
+  state_root_reason=$(fm_procevent_private_directory_diagnose "$STATE" 0 1)
   case "$state_root_reason" in
     ok) ;;
     bad-mode) die "process-event state root is not a private directory - chmod 750 $STATE, then re-arm" ;;
