@@ -942,6 +942,11 @@ This start-to-start governor is a no-op after a normally blocking poll but caps 
 Real feedback, ended and missing sessions, any other `SERVER_ERROR`, and that same interruption still standing once the bound is spent are all captured and announced normally; `FM_LAVISH_POLL_RETRY_DELAY` is a bounded 1 to 60 second test override for the interval only, and the runner itself stays adapter-agnostic.
 An already-armed Lavish source keeps its registered listener command until it is retired and armed again, so re-arm a live board once to adopt this retry policy.
 
+The mark-feed adapter (`bin/fm-procevent-markfeed.sh`) registers an operator-supplied poll command that blocks until the next owner mark, prints one `mark <surface> <slug> <kind> <item> <value> [session=<8 chars>]` line per mark, and exits.
+Register it with `bin/fm-procevent-markfeed.sh arm [--name <slug>] -- <absolute-poll-command> [<arg>...]`; the command is stored as argv and executed directly, never through a shell.
+Each batch of marks is one `check` wake, a clean exit with nothing printed is a silent re-arm, and marks are carried as inert data that is never evaluated.
+A failing poll command with no marks is one terminal captured error that stops the source instead of waking on every restart, so re-arm after fixing it; the adapter's header and `--help` own the rest.
+
 The `when` adapter (`bin/fm-procevent-when.sh`) turns this channel into a condition->action primitive: it registers a deterministic condition and a deterministic action once, its blocking child polls the condition without waking firstmate, and a stable true fires the action before one terminal outcome is durably captured and published as a wake that remains eligible for re-announcement until handled.
 The (condition, action) spec is stored privately under `state/when/` and hash-bound by a trust record the same way `bin/fm-check-register.sh` binds a custom check, while the spec separately binds the resolved action executable's bytes; a mutated or unregistered spec or a changed action executable is refused before the action runs.
 An action that needs environment to work at all is armed with hash-bound `NAME=VALUE` assignments recorded in that same spec, and the action executable stays argv[0], so binding its bytes is unaffected.
