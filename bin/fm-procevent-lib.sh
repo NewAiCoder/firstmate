@@ -985,17 +985,19 @@ fm_procevent_private_directory_valid() {
   [ "$(fm_procevent_private_directory_diagnose "$1" "$2")" = ok ]
 }
 
-# fm_procevent_private_directory_diagnose <directory> <exact-mode>
+# fm_procevent_private_directory_diagnose <directory> <exact-mode> [resolve-leaf]
 # Same criteria as fm_procevent_private_directory_valid, but names which
 # criterion failed instead of collapsing every cause to a single boolean.
 # "chmod 750 <dir>" only actually fixes the bad-mode case - a directory owned
 # by another user, or reached through a symlinked ancestor, stays broken after
 # that chmod with no hint why. Callers that print a remedy use this instead of
 # the boolean so they can withhold or replace the chmod suggestion when it
-# would not help.
-fm_procevent_private_directory_diagnose() {  # <directory> <exact-mode>
-  local directory=$1 exact_mode=$2 canonical normalized mode
+# would not help. A symlinked leaf is never "ok"; with resolve-leaf=1 the
+# diagnosis describes the link's physical target instead of reporting missing.
+fm_procevent_private_directory_diagnose() {  # <directory> <exact-mode> [resolve-leaf]
+  local directory=$1 exact_mode=$2 resolve_leaf=${3:-0} canonical normalized mode
   if [ -L "$directory" ]; then
+    [ "$resolve_leaf" = 1 ] || { printf 'missing\n'; return 0; }
     directory=$(CDPATH='' cd -P -- "$directory" 2>/dev/null && pwd -P) || { printf 'missing\n'; return 0; }
   fi
   if [ ! -d "$directory" ]; then

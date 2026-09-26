@@ -273,7 +273,7 @@ if [ -e "$STATE" ] || [ -L "$STATE" ]; then
   # $STATE for a diagnosis message after a failed call would always see "".
   procevent_state_root_before_bind=$STATE
   state_root_bind \
-    || die "process-event state root is not a private directory (reason: $(fm_procevent_private_directory_diagnose "$procevent_state_root_before_bind" 0))"
+    || die "process-event state root is not a private directory (reason: $(fm_procevent_private_directory_diagnose "$procevent_state_root_before_bind" 0 1))"
 fi
 
 adapter_script() { printf '%s/bin/fm-procevent-%s.sh\n' "$FM_ROOT" "$1"; }
