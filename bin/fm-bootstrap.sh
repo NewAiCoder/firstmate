@@ -1487,9 +1487,10 @@ detect_code_root_backlog_fork() {
 #
 # "chmod 750" only actually fixes the mode-bits case; the same check also
 # fails when state/ is owned by another user, and an operator running the
-# printed chmod there would see the problem persist with no hint why. fm-procevent.sh's die message carries the
-# specific reason (fm_procevent_private_directory_diagnose); read it back out
-# of its stderr rather than duplicating the check here.
+# printed chmod there would see the problem persist with no hint why.
+# fm-procevent.sh's die message carries the specific reason
+# (fm_procevent_private_directory_diagnose); read it back out of its stderr
+# rather than duplicating the check here.
 detect_procevent_state_root() {
   [ -d "$STATE/procevent" ] || return 0
   local err

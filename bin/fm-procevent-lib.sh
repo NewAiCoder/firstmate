@@ -991,8 +991,10 @@ fm_procevent_private_directory_valid() {
 # "chmod 750 <dir>" only actually fixes the bad-mode case - a directory owned
 # by another user stays broken after that chmod with no hint why. Callers that
 # print a remedy use this instead of the boolean so they can withhold or
-# replace the chmod suggestion when it would not help. A symlinked leaf is
-# never "ok"; with resolve-leaf=1 the directory is first resolved to its
+# replace the chmod suggestion when it would not help. Without resolve-leaf a
+# symlinked leaf is never "ok" (the validity wrapper depends on that, so a
+# swapped-in symlink cannot redirect evidence writes); with resolve-leaf=1,
+# passed only by the state-root callers, the directory is first resolved to its
 # physical path, exactly as fm_procevent_state_root_resolve does, so the
 # diagnosis describes the directory that would actually be operated on.
 fm_procevent_private_directory_diagnose() {  # <directory> <exact-mode> [resolve-leaf]
