@@ -1481,13 +1481,13 @@ detect_code_root_backlog_fork() {
 # in the same actionable-diagnostic style as every other line above, so a
 # state root that regressed to group/world-writable (022) is visible before
 # it silently stops every registered source from ever being polled again.
-# Read-only: `fm-procevent.sh list` triggers the exact same check
-# fm-procevent.sh applies to itself and mutates nothing.
+# `fm-procevent.sh list` triggers the exact same check fm-procevent.sh applies
+# to itself; its only write is the owner-lease refresh the watcher's reconcile
+# performs every cycle.
 #
 # "chmod 750" only actually fixes the mode-bits case; the same check also
-# fails when state/ is owned by another user or reached through a symlinked
-# ancestor, and an operator running the printed chmod there would see the
-# problem persist with no hint why. fm-procevent.sh's die message carries the
+# fails when state/ is owned by another user, and an operator running the
+# printed chmod there would see the problem persist with no hint why. fm-procevent.sh's die message carries the
 # specific reason (fm_procevent_private_directory_diagnose); read it back out
 # of its stderr rather than duplicating the check here.
 detect_procevent_state_root() {
@@ -1499,8 +1499,6 @@ detect_procevent_state_root() {
       echo "PROCEVENT: process-event state root is not a private directory - chmod 750 $STATE to resume polling its registered sources" ;;
     *'reason: not-owned'*)
       echo "PROCEVENT: process-event state root ($STATE) is not owned by the current user - chmod will not fix this; fix ownership to resume polling its registered sources" ;;
-    *'reason: symlinked-ancestor'*)
-      echo "PROCEVENT: process-event state root ($STATE) is reached through a symlinked ancestor - chmod will not fix this; remove the symlink from its path to resume polling its registered sources" ;;
     *)
       echo "PROCEVENT: process-event state root is not usable, so its registered sources are not being polled - $err" ;;
   esac
