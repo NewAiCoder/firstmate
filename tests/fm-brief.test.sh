@@ -573,7 +573,7 @@ test_no_mistakes_dod_carries_quota_efficiency_rules() {
     "no-mistakes DOD must name this task's deterministic pipeline-state watch (D5)"
   assert_grep "paused: no-mistakes run in progress, clears on its own" "$brief" \
     "no-mistakes DOD must tell the worker to declare paused: while a pipeline round runs"
-  assert_grep "resolved: run returned" "$brief" \
+  assert_grep "resolved [at=<epoch>]: run returned" "$brief" \
     "no-mistakes DOD must tell the worker to resolve the pause once the run parks"
 
   assert_grep "Default convergence after the second review round" "$brief" \
