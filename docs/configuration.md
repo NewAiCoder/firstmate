@@ -304,7 +304,7 @@ These are the bounds set by the captain-approved architecture.
 Every existing captain gate remains unchanged in either posture.
 Homes on other primary harnesses do not load the Pi branch extension; shared per-task lease behavior is owned by `bin/fm-lease-lib.sh`.
 
-`AGENTS.md`'s `state/` inventory routes the branch's runtime files to their format and lifecycle owners.
+The `state/` entries in "File inventory" above route the branch's runtime files to their format and lifecycle owners.
 
 ### Outcome delivery and acknowledgement
 
