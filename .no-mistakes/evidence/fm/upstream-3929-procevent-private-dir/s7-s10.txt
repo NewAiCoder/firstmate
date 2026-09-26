@@ -1,0 +1,15 @@
+## S7 symlinked state-root leaf -> group-writable target names bad-mode (not 'missing')
+error: process-event state root is not a private directory (reason: bad-mode)
+exit=1
+## S8 symlinked state-root leaf -> private target still operates (resolve-then-validate)
+no sources registered
+exit=0
+## S9 state-root owned by another user -> not-owned, no chmod advice
+error: process-event state root is not a private directory (reason: not-owned)
+exit=1
+## S10 shared validator still rejects symlinked private leaf (redirect guard)
+rejected
+/home/dvids/.no-mistakes/worktrees/307f4b43b54a/01M3FP5XANTQNG540STNXFK8HR/bin/fm-procevent-lib.sh: line 1014: fm_pr_file_mode: command not found
+real-rejected
+/home/dvids/.no-mistakes/worktrees/307f4b43b54a/01M3FP5XANTQNG540STNXFK8HR/bin/fm-procevent-lib.sh: line 1014: fm_pr_file_mode: command not found
+missing

@@ -1,0 +1,12 @@
+## S1 register source, private state (baseline)
+registered: s1-src (lavish)
+register exit=0
+SOURCE                       ADAPTER      OWNER      PENDING
+s1-src                       lavish       none       0
+list exit=0
+## S2 group-writable state root -> list dies with reason bad-mode
+error: process-event state root is not a private directory (reason: bad-mode)
+list exit=1
+## S3 bootstrap PROCEVENT line (detect_local_config)
+PROCEVENT: process-event state root is not a private directory - chmod 750 /tmp/fm-lab.oTdhVy/state to resume polling its registered sources
+grep exit=0
