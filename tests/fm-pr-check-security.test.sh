@@ -2485,10 +2485,10 @@ test_persistent_secondmate_retirement_is_poll_only() {
     || fail "a secondmate's merged poll queued a landed-work wake"
   ! grep -F 'domain.check.sh' "$state/.wake-queue" >/dev/null 2>&1 \
     || fail "a secondmate's merged poll queued a check wake"
-  [ "$(shasum -a 256 "$state/domain.meta")" = "$meta_before" ] || fail "retirement changed secondmate metadata"
-  [ "$(shasum -a 256 "$state/domain.status")" = "$status_before" ] || fail "retirement changed secondmate status"
-  [ "$(shasum -a 256 "$dir/home/data/secondmates.md")" = "$registry_before" ] || fail "retirement changed secondmate registry"
-  [ "$(shasum -a 256 "$dir/endpoint-sentinel")" = "$endpoint_before" ] || fail "retirement changed secondmate endpoint evidence"
+  [ "$(fm_custom_check_sha256 "$state/domain.meta")" = "$meta_before" ] || fail "retirement changed secondmate metadata"
+  [ "$(fm_custom_check_sha256 "$state/domain.status")" = "$status_before" ] || fail "retirement changed secondmate status"
+  [ "$(fm_custom_check_sha256 "$dir/home/data/secondmates.md")" = "$registry_before" ] || fail "retirement changed secondmate registry"
+  [ "$(fm_custom_check_sha256 "$dir/endpoint-sentinel")" = "$endpoint_before" ] || fail "retirement changed secondmate endpoint evidence"
   [ -d "$dir/secondmate-home" ] || fail "retirement removed the persistent secondmate home"
   pass "a merged poll on a persistent secondmate retires silently: no outcome, marker, or wake, and every lifecycle artifact preserved"
 }
