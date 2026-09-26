@@ -1,0 +1,5 @@
+ok - wall-clock corrections do not alter owner lease age
+registered: detached-attached-src (lavish)
+ok - an attached-start keeper stops refreshing after its parent exits
+ok - a detected ambiguous reused-PID group is not signalled
+not ok - the listener under test was not reparented away from its session (ppid 209)

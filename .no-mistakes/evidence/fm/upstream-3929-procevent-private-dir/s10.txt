@@ -1,0 +1,5 @@
+## S10 shared validator still rejects symlinked private leaf (redirect guard)
+link-rejected
+real-accepted
+diagnose-noresolve: missing
+diagnose-resolve: ok

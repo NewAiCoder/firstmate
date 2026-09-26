@@ -1,0 +1,1 @@
+ok - a group-writable state root wakes exactly once per failure episode and clears once recovered

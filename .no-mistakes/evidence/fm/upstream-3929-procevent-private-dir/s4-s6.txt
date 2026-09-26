@@ -1,0 +1,17 @@
+## S4 apply printed remedy (chmod 750) -> bootstrap silent, list ok
+0
+list exit=0
+## S5 arm refuses group-writable state before registering
+procevent
+error: process-event state root is not a private directory - chmod 750 /tmp/fm-lab.oTdhVy/state, then re-arm
+arm exit=1
+ls: cannot access '/tmp/fm-lab.oTdhVy/state/when': No such file or directory
+## S6 arm accepts a legit symlinked ancestor (FM_HOME reached via symlink)
+armed: when-s6
+starts on the watcher's next cycle; or run: bin/fm-procevent.sh reconcile
+reminder: deterministic, safe, reversible actions only; judgment and destructive actions stay on the wake-and-decide path
+arm via symlinked ancestor exit=0
+SOURCE                       ADAPTER      OWNER      PENDING
+s1-src                       lavish       none       0
+when-s6                      when         none       0
+list via symlink exit=0

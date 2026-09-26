@@ -1,0 +1,10 @@
+=== fm-procevent-when
+ok - rebind-all matches FM_ROOT through a symlinked checkout path
+ok - rebind-all reaches a watch whose run process was already polling when the self-update landed
+ok - the fire-time reload never observes rebind_one's spec/trust publish mid-rename
+all fm-procevent-when tests passed
+=== fm-extension-binding
+all extension-binding tests passed
+ok - independent extension conformance sections complete through isolated public homes
+
+all extension-binding tests passed

@@ -1,0 +1,2 @@
+## S14 bootstrap silent: no registrations + group-writable state
+0
