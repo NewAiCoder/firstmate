@@ -198,15 +198,14 @@ cmd_arm() {
   # that can never be polled, with no clear signal why - fail loudly here
   # instead, using the exact same check fm-procevent.sh applies to itself.
   # Diagnose rather than just gate: "chmod 750" is only the right remedy for
-  # the bad-mode case - a state root owned by another user, or reached through
-  # a symlinked ancestor, stays broken after that chmod with no hint why.
+  # the bad-mode case - a state root owned by another user stays broken after
+  # that chmod with no hint why.
   local state_root_reason
   state_root_reason=$(fm_procevent_private_directory_diagnose "$STATE" 0 1)
   case "$state_root_reason" in
     ok) ;;
     bad-mode) die "process-event state root is not a private directory - chmod 750 $STATE, then re-arm" ;;
     not-owned) die "process-event state root ($STATE) is not owned by the current user - chmod will not fix this; fix ownership, then re-arm" ;;
-    symlinked-ancestor) die "process-event state root ($STATE) is reached through a symlinked ancestor - chmod will not fix this; remove the symlink from its path, then re-arm" ;;
     *) die "process-event state root ($STATE) is not usable ($state_root_reason), then re-arm" ;;
   esac
   fm_procevent_source_lock_acquire "$sid" || die "cannot lock the watch source"
