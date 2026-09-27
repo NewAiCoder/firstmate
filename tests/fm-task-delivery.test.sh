@@ -64,7 +64,7 @@ run_spawn() {  # <home> <fakebin> <spawn-args...>
   shift 2
   FM_ROOT_OVERRIDE='' FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
-    FM_PROJECTS_OVERRIDE="$TMP_ROOT/projects-unused" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_PROJECTS_OVERRIDE="${SPAWN_PROJECTS_DIR:-$TMP_ROOT/projects-unused}" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_BACKEND=tmux PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
 }
@@ -794,7 +794,44 @@ EOF
   pass "fm-spawn: every legacy worker receives scoped role instructions without changing project or primary instructions"
 }
 
+test_spawn_refuses_direct_pr_where_ci_requires_no_mistakes() {
+  local rec home proj fakebin out status
+  rec=$(make_home attested)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  write_brief "$home" attested-a1 direct-PR
+  out=$(run_spawn "$home" "$fakebin" attested-a1 "$proj" claude --mode direct-PR --yolo off)
+  assert_not_contains "$out" "requires PRs to be raised via no-mistakes" "guard fired without the workflow"
+
+  mkdir -p "$proj/.github/workflows"
+  printf 'name: gate\njobs:\n  attest:\n    name: PR must be raised via no-mistakes\n    runs-on: ubuntu-latest\n' \
+    > "$proj/.github/workflows/attestation-gate.yml"
+
+  out=$(run_spawn "$home" "$fakebin" attested-a1 "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "direct-PR should be refused when the workflow is present"
+  assert_contains "$out" "attestation-gate.yml" "refusal did not name the workflow"
+  assert_contains "$out" "--mode no-mistakes" "refusal did not name the fix"
+  assert_absent "$home/state/attested-a1.meta" "refused spawn wrote task metadata"
+
+  write_brief "$home" attested-a4 direct-PR
+  out=$(SPAWN_PROJECTS_DIR=${proj%/*} run_spawn "$home" "$fakebin" attested-a4 "projects/${proj##*/}" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "direct-PR should be refused for the projects/<name> spelling"
+  assert_contains "$out" "attestation-gate.yml" "projects/<name> spelling bypassed the guard"
+
+  write_brief "$home" attested-a2 no-mistakes
+  out=$(run_spawn "$home" "$fakebin" attested-a2 "$proj" claude --mode no-mistakes --yolo off)
+  assert_not_contains "$out" "requires PRs to be raised via no-mistakes" "no-mistakes mode was refused"
+  write_brief "$home" attested-a3 local-only
+  out=$(run_spawn "$home" "$fakebin" attested-a3 "$proj" claude --mode local-only --yolo off)
+  assert_not_contains "$out" "requires PRs to be raised via no-mistakes" "local-only mode was refused"
+  pass "fm-spawn: direct-PR is refused only where CI requires PRs raised via no-mistakes"
+}
+
 test_spawn_refreshes_legacy_worker_roles
+test_spawn_refuses_direct_pr_where_ci_requires_no_mistakes
 test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
