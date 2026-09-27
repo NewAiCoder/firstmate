@@ -575,6 +575,14 @@ case "$EFFORT" in
   *) echo "error: --effort must be one of low, medium, high, xhigh, max, ultra" >&2; exit 1 ;;
 esac
 
+resolve_project_dir_arg() {
+  local path=$1
+  case "$path" in
+    projects/*) printf '%s/%s\n' "$PROJECTS" "${path#projects/}" ;;
+    *) printf '%s\n' "$path" ;;
+  esac
+}
+
 # A repository whose CI requires PRs to be raised via no-mistakes fails every
 # directly opened PR, so a direct-PR ship spawn there is refused before anything
 # is created. The requirement is read from the project's local checkout by the
@@ -623,7 +631,7 @@ else
       *) echo "error: --mode must be one of no-mistakes, direct-PR, local-only (got '$MODE')" >&2; exit 1 ;;
     esac
     if [ "$MODE" = direct-PR ] && [ -n "${POS[1]:-}" ]; then
-      NM_REQUIRED_WORKFLOW=$(nm_attestation_workflow "${POS[1]}")
+      NM_REQUIRED_WORKFLOW=$(nm_attestation_workflow "$(resolve_project_dir_arg "${POS[1]}")")
       if [ -n "$NM_REQUIRED_WORKFLOW" ]; then
         echo "error: this project's $NM_REQUIRED_WORKFLOW requires PRs to be raised via no-mistakes, so a direct-PR pull request is guaranteed to fail that check; spawn with --mode no-mistakes" >&2
         exit 1
@@ -2120,14 +2128,6 @@ resolved_existing_dir() {
   local path=$1
   [ -d "$path" ] || { echo "error: firstmate home does not exist or is not a directory: $path" >&2; return 1; }
   cd "$path" && pwd -P
-}
-
-resolve_project_dir_arg() {
-  local path=$1
-  case "$path" in
-    projects/*) printf '%s/%s\n' "$PROJECTS" "${path#projects/}" ;;
-    *) printf '%s\n' "$path" ;;
-  esac
 }
 
 path_is_ancestor_of() {

@@ -64,7 +64,7 @@ run_spawn() {  # <home> <fakebin> <spawn-args...>
   shift 2
   FM_ROOT_OVERRIDE='' FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
-    FM_PROJECTS_OVERRIDE="$TMP_ROOT/projects-unused" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_PROJECTS_OVERRIDE="${SPAWN_PROJECTS_DIR:-$TMP_ROOT/projects-unused}" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_BACKEND=tmux PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
 }
@@ -814,6 +814,12 @@ EOF
   assert_contains "$out" "attestation-gate.yml" "refusal did not name the workflow"
   assert_contains "$out" "--mode no-mistakes" "refusal did not name the fix"
   assert_absent "$home/state/attested-a1.meta" "refused spawn wrote task metadata"
+
+  write_brief "$home" attested-a4 direct-PR
+  out=$(SPAWN_PROJECTS_DIR=${proj%/*} run_spawn "$home" "$fakebin" attested-a4 "projects/${proj##*/}" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "direct-PR should be refused for the projects/<name> spelling"
+  assert_contains "$out" "attestation-gate.yml" "projects/<name> spelling bypassed the guard"
 
   write_brief "$home" attested-a2 no-mistakes
   out=$(run_spawn "$home" "$fakebin" attested-a2 "$proj" claude --mode no-mistakes --yolo off)
