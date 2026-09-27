@@ -1,0 +1,15 @@
+--- 1 direct-PR abs path, real repo workflow (cwd=/tmp)
+error: this project's .github/workflows/no-mistakes-required.yml requires PRs to be raised via no-mistakes, so a direct-PR pull request is guaranteed to fail that check; spawn with --mode no-mistakes
+exit=1
+--- 2 direct-PR projects/ alias, cwd=/tmp
+error: this project's .github/workflows/no-mistakes-required.yml requires PRs to be raised via no-mistakes, so a direct-PR pull request is guaranteed to fail that check; spawn with --mode no-mistakes
+exit=1
+--- 3 no-mistakes mode, same project
+exit=1
+--- 4 local-only mode, same project
+notice: t4 ships mode=local-only while the standing posture for 01M3GFKQPP8Z86T427AKY4JX60 is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+exit=1
+--- 5 direct-PR, project without workflow
+notice: t5 ships mode=direct-PR while the standing posture for plain is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+exit=1
+state files:
