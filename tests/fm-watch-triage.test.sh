@@ -2067,6 +2067,75 @@ test_nonterminal_stale_provably_working_absorbed_then_escalated() {
   pass "provably-working non-terminal stale is absorbed on first sight, then wedge-escalated past the threshold"
 }
 
+# --- a finished crew whose run is gone: the wedge timer stops, never repeats ---
+# The live 2026-09 case: a crew reported done and only waits on an outside merge.
+# While its run monitored CI the pane was provably working, which started the
+# wedge timer; once the run vanished (fm-crew-state reads unknown) that timer kept
+# escalating "possible wedge" every STALE_ESCALATE_SECS forever. Both status shapes
+# reach the timer through a different branch, so each is driven through the same
+# three phases: working absorb (timer starts), run gone at the threshold (no wedge
+# wake, at most the ordinary surface), then the same hash stays quiet.
+run_working_then_gone_case() {  # <case-name> <task> <status-line>
+  local name=$1 task=$2 status_line=$3 dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case "$name"); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-$task"
+  printf 'idle after monitoring ci' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/$task.meta"
+  printf '%s\n' "$status_line" > "$state/$task.status"
+  sig=$(seen_sig "$state/$task.status"); printf '%s' "$sig" > "$state/.seen-${task}_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle after monitoring ci")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+
+  # Phase A: the run is monitoring CI, so the static pane is absorbed and timed.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · ci running'
+  watch_bg "$state" "$fakebin" "$out" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" FM_STALE_ESCALATE_SECS=240
+  pid=$!
+  wait_poll_cycle "$state" "$pid" || { reap "$pid"; fail "$name: watcher exited while absorbing a working run: $(cat "$out")"; }
+  [ -s "$state/.stale-since-$key" ] || { reap "$pid"; fail "$name: the working absorb did not start the wedge timer"; }
+  reap "$pid"
+  ack_stopped_cycle "$state" || fail "$name: could not acknowledge the phase-A stop"
+
+  # Phase B: the run is gone (unknown) and the timer is past the threshold. The
+  # old code escalated "possible wedge" here.
+  export FM_FAKE_CREW_STATE='state: unknown · source: none'
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" FM_STALE_ESCALATE_SECS=240
+  pid=$!
+  # The ordinary one-time surface ends this watcher; a wedge wake would too.
+  wait_for_exit "$pid" 100 || { reap "$pid"; fail "$name: a crew whose run is gone was never surfaced through the ordinary path"; }
+  grep -F "stale: $window" "$out" >/dev/null || fail "$name: the ordinary surface did not print a stale wake: $(cat "$out")"
+  grep -F "possible wedge" "$out" "$state/.wake-queue" >/dev/null 2>&1 \
+    && fail "$name: a crew whose run is gone was wedge-escalated: $(cat "$out" "$state/.wake-queue" 2>/dev/null)"
+  [ ! -e "$state/.stale-since-$key" ] || fail "$name: the wedge timer survived the run going away"
+  [ ! -e "$state/.wedge-escalations-$key" ] || fail "$name: a wedge-escalation count was recorded for a finished crew"
+  ack_stopped_cycle "$state" || fail "$name: could not acknowledge the phase-B surface"
+
+  # Phase C: the same hash later stays quiet - no timer, no wake, however long.
+  : > "$out"; rm -f "$state/.wake-queue"
+  watch_bg "$state" "$fakebin" "$out" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" FM_STALE_ESCALATE_SECS=1
+  pid=$!
+  sleep 4
+  kill -0 "$pid" 2>/dev/null || { wait "$pid" 2>/dev/null || true; fail "$name: the finished crew woke firstmate again: $(cat "$out" "$state/.wake-queue" 2>/dev/null)"; }
+  [ ! -e "$state/.stale-since-$key" ] || { reap "$pid"; fail "$name: a finished crew restarted the wedge timer"; }
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "$name: a finished crew re-enqueued a wake: $(cat "$state/.wake-queue")"; }
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+}
+
+test_terminal_done_crew_whose_run_is_gone_stops_wedge_escalating() {
+  run_working_then_gone_case done-run-gone donegone 'done: PR https://example.invalid/pr/1 checks green'
+  pass "a done: crew whose run is gone stops wedge-escalating after the ordinary surface"
+}
+
+test_nonterminal_crew_whose_run_is_gone_stops_wedge_escalating() {
+  run_working_then_gone_case quiet-run-gone quietgone 'working: waiting on the outside merge'
+  pass "a quiet crew whose run is gone stops wedge-escalating and never restarts the timer"
+}
+
 # --- non-terminal stale, crew NOT provably working: surfaced immediately ------
 # The key requirement: a crew with no running pipeline that has gone quiet (and is
 # not busy) has stopped - it may be done via interactive menus, waiting, or wedged.
@@ -3876,9 +3945,11 @@ test_nonterminal_stale_repairs_missing_or_corrupt_timer() {
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
   printf '%s' "$pane_hash" > "$state/.stale-$key"
+  # The timer is only repaired for a crew that is still provably working.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · ci running'
 
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
-    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
   pid=$!
   wait_numeric_file "$state/.stale-since-$key" 30 || { reap "$pid"; fail "matching stale suppressor with missing timer did not initialize stale-since"; }
@@ -3893,7 +3964,7 @@ test_nonterminal_stale_repairs_missing_or_corrupt_timer() {
   printf 'corrupt\n' > "$state/.stale-since-$key"
   : > "$out"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
-    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
   pid=$!
   wait_numeric_file "$state/.stale-since-$key" 30 || { reap "$pid"; fail "matching stale suppressor with corrupt timer did not repair stale-since"; }
@@ -3901,6 +3972,7 @@ test_nonterminal_stale_repairs_missing_or_corrupt_timer() {
   [ "$since" != "corrupt" ] || { reap "$pid"; fail "corrupt stale-since value was left in place"; }
   [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "corrupt stale-since repair enqueued a wake"; }
   reap "$pid"
+  unset FM_FAKE_CREW_STATE
   pass "matching non-terminal stale suppressors repair missing or corrupt stale-since timers"
 }
 
@@ -3920,6 +3992,8 @@ test_nonterminal_stale_repairs_missing_or_corrupt_timer() {
 test_wedge_escalation_deferred_while_worktree_is_written() {
   local dir state fakebin out drain_out capture_file window key pane_hash sig pid wt back
   dir=$(make_case wedge-worktree-writes); state="$dir/state"; fakebin="$dir/fakebin"
+  # The at-threshold wedge branch re-confirms the crew is still provably working.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · ci running'
   out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
   window="test:fm-writing"; wt="$dir/wt"
   mkdir -p "$wt/src"
@@ -3978,6 +4052,7 @@ test_wedge_escalation_deferred_while_worktree_is_written() {
   [ ! -e "$state/.writing-since-$key" ] || fail "the write-deferral chain outlived a real escalation"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the stalled-crew escalation failed"
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the stalled-crew escalation was not queued"
+  unset FM_FAKE_CREW_STATE
   pass "a quiet pane writing its own worktree is deferred, while one writing nothing still wedge-escalates on the unchanged schedule"
 }
 
@@ -3988,6 +4063,8 @@ test_wedge_escalation_deferred_while_worktree_is_written() {
 test_write_deferral_resurfaces_on_the_bounded_cadence() {
   local dir state fakebin out drain_out capture_file window key pane_hash sig pid wt back
   dir=$(make_case wedge-worktree-resurface); state="$dir/state"; fakebin="$dir/fakebin"
+  # The at-threshold wedge branch re-confirms the crew is still provably working.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · ci running'
   out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
   window="test:fm-churn"; wt="$dir/wt"
   mkdir -p "$wt/src"
@@ -4021,6 +4098,7 @@ test_write_deferral_resurfaces_on_the_bounded_cadence() {
   [ ! -e "$state/.wedge-escalations-$key" ] || fail "a write-deferral recheck advanced the wedge escalation counter"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the write-deferral recheck failed"
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the write-deferral recheck was not queued"
+  unset FM_FAKE_CREW_STATE
   pass "a write deferral re-surfaces once on the bounded pause cadence, so a churning worktree cannot stay invisible"
 }
 
@@ -4083,6 +4161,8 @@ test_secondmate_home_supervision_churn_is_not_write_evidence() {
 test_timer_repair_drops_a_finished_write_deferral_chain() {
   local dir state fakebin out capture_file window key pane_hash sig pid wt back
   dir=$(make_case wedge-write-chain-timer-repair); state="$dir/state"; fakebin="$dir/fakebin"
+  # The at-threshold wedge branch re-confirms the crew is still provably working.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · ci running'
   out="$dir/watch.out"; capture_file="$dir/pane.txt"
   window="test:fm-chain-repair"; wt="$dir/wt"
   mkdir -p "$wt/src"
@@ -4143,6 +4223,7 @@ test_timer_repair_drops_a_finished_write_deferral_chain() {
   [ ! -e "$state/.writing-resurfaced-$key" ] \
     || { reap "$pid"; fail "a fresh write deferral spent its bounded re-surface on the first poll"; }
   reap "$pid"
+  unset FM_FAKE_CREW_STATE
   pass "an idle-window timer repair drops a finished write-deferral chain, so the next deferral gets a fresh re-surface window"
 }
 
@@ -5170,6 +5251,8 @@ test_permission_recovery_surfaces_preserved_status
 test_terminal_stale_surfaced
 test_stale_terminal_status_overridden_by_active_run
 test_nonterminal_stale_provably_working_absorbed_then_escalated
+test_terminal_done_crew_whose_run_is_gone_stops_wedge_escalating
+test_nonterminal_crew_whose_run_is_gone_stops_wedge_escalating
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold
 test_wedge_escalation_resets_when_pane_becomes_active
 test_busy_pane_below_turn_age_bound_is_absorbed
