@@ -411,7 +411,7 @@ window_label() {
 
 # The ONE derivation of a window's per-window marker key: `:`, `/` and `.` become
 # `_` so a window name is usable as a filename suffix. Every per-window file the
-# watcher keeps is named by it (.hash-, .count-, .stale-, .stale-since-,
+# watcher keeps is named by it (.hash-, .count-, .stale-, .stale-since-, .stale-settled-,
 # .wedge-escalations-, .paused-*, .writing-*), and live homes hold those markers on
 # disk under the current format, so the format lives here alone: a second copy is
 # how a future change to it silently orphans a window's markers instead of clearing
@@ -948,11 +948,25 @@ clear_write_tracking() {  # <window-key>
 # The worktree write probe runs ONLY here, inside the at-threshold branch that is
 # about to escalate: at most one bounded walk per window per STALE_ESCALATE_SECS,
 # never per poll.
-wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task>
-  local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n reason
+wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task> [reverify]
+  local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 reverify=${6:-} since age n reason key settled
+  key=$(window_key "$win")
+  settled="$STATE/.stale-settled-$key"
+  # A stale hash already found no longer provably working stays quiet: no timer,
+  # no crew-state read per poll (see wedge_timer_gone_quiet).
+  if [ -n "$reverify" ] && [ -e "$settled" ] && [ "$(cat "$settled" 2>/dev/null || true)" = "$(cat "$STATE/.stale-$key" 2>/dev/null || true)" ]; then
+    return 0
+  fi
   since=$(cat "$since_file" 2>/dev/null || true)
   case "$since" in
     ''|*[!0-9]*)
+      if [ -n "$reverify" ] && ! crew_is_provably_working "$task"; then
+        # No timer to repair: the run that justified one is gone, so starting a
+        # fresh one would wedge-escalate a finished crew forever.
+        cp "$STATE/.stale-$key" "$settled" 2>/dev/null || : > "$settled"
+        triage_log "absorbed $label (crew no longer provably working, no wedge timer started): $win"
+        return 0
+      fi
       # Publish the repaired timer only after its old write-deferral chain is
       # gone, so observers cannot mistake a new idle window for the old chain.
       clear_write_tracking "$(window_key "$win")"
@@ -962,6 +976,16 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
     *)
       age=$(( $(date +%s) - since ))
       if [ "$age" -ge "$STALE_ESCALATE_SECS" ]; then
+        if [ -n "$reverify" ] && ! crew_is_provably_working "$task"; then
+          # The evidence that started this timer (a live run) is gone, so the
+          # pane is no longer a wedge suspect. Drop the timer and the hash
+          # suppressor: the next poll classifies the hash afresh, surfacing a
+          # finished crew once through the ordinary path instead of escalating.
+          rm -f "$since_file" "$escalation_file" "$STATE/.stale-$key"
+          clear_write_tracking "$key"
+          triage_log "absorbed $label timer (crew no longer provably working, reclassifying): $win"
+          return 0
+        fi
         if crew_worktree_written_since "$task" "$STATE" "$since_file"; then
           wedge_defer_writing "$win" "$since_file" "$label" "$age"
           return 0
@@ -1016,7 +1040,7 @@ handle_paused_stale() {  # <window> <task> <hash>
   key=$(window_key "$win")
   printf '%s' "$h" > "$STATE/.stale-$key"
   : > "$STATE/.paused-$key"
-  rm -f "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key"
+  rm -f "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key" "$STATE/.stale-settled-$key"
   clear_write_tracking "$key"
   statusf="$STATE/$task.status"
   mtime=$(stat_mtime "$statusf")
@@ -1148,7 +1172,7 @@ clear_pause_state() {  # <window-key>
 clear_stale_hash_tracking() {  # <window-key>
   local key=$1
   clear_write_tracking "$key"
-  rm -f "$STATE/.stale-$key" "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key"
+  rm -f "$STATE/.stale-$key" "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key" "$STATE/.stale-settled-$key"
 }
 
 clear_pause_tracking() {  # <window-key>
@@ -2455,7 +2479,7 @@ EOF
             # wedge timer is running for it) - keep treating it that way
             # without re-reading the crew state every poll, and without
             # letting the still-captain-relevant log line re-surface it.
-            wedge_timer_check "$w" "$ssf" "stale (overridden terminal status)" "$ewf" "$task"
+            wedge_timer_check "$w" "$ssf" "stale (overridden terminal status)" "$ewf" "$task" reverify
           fi
           # else: already surfaced as genuinely terminal on a prior poll of
           # this same hash - nothing left to do (matches the original,
@@ -2507,7 +2531,7 @@ EOF
                 *)       handle_paused_stale "$w" "$task" "$h" ;;
               esac
             else
-              wedge_timer_check "$w" "$ssf" "non-terminal stale" "$ewf" "$task"
+              wedge_timer_check "$w" "$ssf" "non-terminal stale" "$ewf" "$task" reverify
             fi
           fi
         fi
@@ -2520,7 +2544,7 @@ EOF
         if [ "$busy_now" -eq 0 ] && busy_turn_over_age "$task"; then
           busy_turn_bound_check "$w" "$task" "$h" "$ssf" "$ewf" && paused_bound=0
         else
-          rm -f "$ssf" "$ewf"
+          rm -f "$ssf" "$ewf" "$STATE/.stale-settled-$key"
           clear_write_tracking "$key"
         fi
         # A busy pane normally means real work resumed, so stale pause bookkeeping
@@ -2538,7 +2562,7 @@ EOF
       if [ "$busy_now" -eq 0 ] && busy_turn_over_age "$task"; then
         busy_turn_bound_check "$w" "$task" "$h" "$ssf" "$ewf" && paused_bound=0
       else
-        rm -f "$ssf" "$ewf"
+        rm -f "$ssf" "$ewf" "$STATE/.stale-settled-$key"
         clear_write_tracking "$key"
       fi
       task=$(window_to_task "$w" "$STATE")
