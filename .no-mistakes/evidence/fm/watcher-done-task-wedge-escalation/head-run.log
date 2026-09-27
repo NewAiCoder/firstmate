@@ -1,0 +1,23 @@
+ok - a stale pane sitting on a terminal status is surfaced (queue + exit)
+ok - a stale terminal-looking status is overridden and absorbed while a run is actively working, then wedge-escalated
+ok - provably-working non-terminal stale is absorbed on first sight, then wedge-escalated past the threshold
+ok - a done: crew whose run is gone stops wedge-escalating after the ordinary surface
+ok - a quiet crew whose run is gone stops wedge-escalating and never restarts the timer
+ok - consecutive wedge escalations on the same pane accumulate and demand deep inspection at the threshold
+ok - a pane becoming active again resets the consecutive wedge-escalation counter
+ok - a busy worker below the turn-age bound remains working with no escalation
+ok - a busy worker with a stable pane hash still escalates once its completed-turn age reaches the bound
+ok - a busy pane under a declared pause is rechecked on the long cadence, and lifting the pause restores the wedge escalation
+ok - a not-provably-working non-terminal stale is surfaced immediately (never left to wait out the timer)
+ok - a declared pause is absorbed on first sight, then re-surfaced as a recheck past the threshold, never wedge-escalated
+ok - a declared pause is periodically rechecked against authoritative active-run state
+ok - a paused status overridden by authoritative working preserves its wedge timer and escalates
+ok - a declared no-mistakes-run pause backed by a live run holds the pause cadence and never wedge-escalates
+ok - matching non-terminal stale suppressors repair missing or corrupt stale-since timers
+ok - a quiet pane writing its own worktree is deferred, while one writing nothing still wedge-escalates on the unchanged schedule
+ok - a write deferral re-surfaces once on the bounded pause cadence, so a churning worktree cannot stay invisible
+ok - an idle-window timer repair drops a finished write-deferral chain, so the next deferral gets a fresh re-surface window
+
+real	1m20.926s
+user	0m44.997s
+sys	0m23.346s
