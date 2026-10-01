@@ -6203,21 +6203,18 @@ test_procevent_reconcile_marker_never_follows_a_symlink() {
 
   procevent_watch_bg "$dir" "$out"
   pid=$!
-  wait_poll_cycle "$state" "$pid" >/dev/null 2>&1 || true
+  if ! wait_for_exit "$pid" 100; then
+    chmod 700 "$state"
+    fail "a planted marker symlink suppressed the reconcile-failure wake: $(cat "$out")"
+  fi
   chmod 700 "$state"
-  reap "$pid"
   [ ! -e "$target" ] && [ ! -L "$target" ] \
-    || fail "the reconcile marker write followed a planted symlink and created its target"
-  [ -L "$marker" ] || fail "the planted symlink was replaced instead of left untouched"
-
-  # Recovery unlinks the planted link itself and still never creates its target.
-  procevent_watch_bg "$dir" "$out.recovered"
-  pid=$!
-  wait_poll_cycle "$state" "$pid" >/dev/null 2>&1 || true
-  reap "$pid"
-  [ ! -e "$target" ] || fail "recovery created the symlink target"
-  [ ! -L "$marker" ] || fail "recovery did not clear the planted marker symlink"
-  pass "the reconcile-failed marker never follows a symlink planted in the state root"
+    || fail "the reconcile marker followed a planted symlink and created its target"
+  grep -F "check: process-event reconcile failed:" "$out" >/dev/null \
+    || fail "a planted marker symlink hid the reconcile failure: $(cat "$out")"
+  [ ! -L "$marker" ] && [ -d "$marker" ] \
+    || fail "the planted symlink was not replaced by a plain marker directory"
+  pass "a symlink planted at the reconcile-failed marker is replaced, never followed, and still wakes"
 }
 
 # --- heartbeat: no-change absorbed, backstop surfaces a missed status --------
