@@ -404,9 +404,18 @@ fm_idle_compact_activity_age() {  # <state> <task>
 # fast path") for the full contract; bin/fm-dod-lib.sh's no-mistakes block is
 # the phrase's one owner.
 fm_idle_compact_declared_paused() {  # <state> <task>
-  local statusf="$1/$2.status" line
+  local statusf="$1/$2.status" line rest epoch
   [ -f "$statusf" ] || return 1
   line=$(tail -n 1 "$statusf" 2>/dev/null || true)
+  # Accept the emission-time stamp the brief asks for ("paused [at=<epoch>]:"),
+  # folding it back to the bare phrase before the prefix match.
+  case "$line" in
+    "paused [at="*"]:"*)
+      rest=${line#paused \[at=}
+      epoch=${rest%%]:*}
+      case "$epoch" in ''|*[!0-9]*) ;; *) line="paused:${rest#*]:}" ;; esac
+      ;;
+  esac
   case "$line" in
     "$FM_IDLE_COMPACT_DECLARED_PHRASE") return 0 ;;
     "$FM_IDLE_COMPACT_DECLARED_PHRASE"[!A-Za-z0-9]*) return 0 ;;

@@ -55,6 +55,10 @@ export FM_GATE_REFUSE_BYPASS=1
 # string, but those tests have no reason to expect it. tests/fm-agent-memory-*
 # explicitly clear this to exercise the real wrapper.
 export FM_AGENT_MEMORY_DISABLE=1
+# Arms the test-only seams bin/ scripts expose (e.g. fm-afk-launch.sh's
+# FM_TEST_HARNESS harness pin). Normal primary launches do not arm it, so a
+# leaked harness pin alone stays inert outside a suite.
+export FM_TEST_SEAM=1
 
 # Clear the task-worker marker bin/fm-spawn.sh exports into ship and scout
 # panes. This suite builds git-init fixture repositories whose primary checkout
@@ -160,6 +164,47 @@ fm_test_reap_procevent_homes() {
   rm -f "$FM_TEST_PROCEVENT_REGISTRY"
 }
 
+# --- armed watcher reaping ----------------------------------------------------
+#
+# A real bin/fm-watch.sh a suite arms for a temporary home is a long-lived
+# process that outlives the test on its own; only stopping the exact watcher the
+# home's lock names ends it. Registration goes through a `$$`-keyed registry
+# file for the same reason the runners above do. The reap is scoped to each
+# tracked state directory: it reads the home that watcher recorded in its own
+# lock and drives the arm's home-scoped --stop against it, which identity-checks
+# the pid before signalling, so it never matches on a script or process name and
+# never reaches another home's watcher. A tracked state directory a test already
+# deleted has no lock and is skipped; that watcher exits on its own home-gone
+# check within one poll.
+
+FM_TEST_WATCHER_REGISTRY=$(mktemp "${TMPDIR:-/tmp}/.fm-test-watcher.$$.XXXXXX") || return 1
+
+fm_test_track_watcher_state() {  # <state-dir>
+  [ -n "${1:-}" ] || return 1
+  printf '%s\n' "$1" >> "$FM_TEST_WATCHER_REGISTRY"
+}
+
+fm_test_reap_watchers() {
+  local state lock_home seen=$'\n'
+  [ -f "$FM_TEST_WATCHER_REGISTRY" ] || return 0
+  while IFS= read -r state; do
+    [ -n "$state" ] || continue
+    case "$seen" in *$'\n'"$state"$'\n'*) continue ;; esac
+    seen+="$state"$'\n'
+    [ -f "$state/.watch.lock/pid" ] || continue
+    # A fixture that fabricates a lock naming this test process (the
+    # drain-liveness assertion writes $$ with the runner's own identity) is not
+    # an armed watcher. Stopping it would signal the runner, and the suite's
+    # TERM trap re-enters this reap, looping forever. Never reap our own pid.
+    [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" != "$$" ] || continue
+    lock_home=$(cat "$state/.watch.lock/fm-home" 2>/dev/null || true)
+    [ -n "$lock_home" ] || continue
+    FM_HOME="$lock_home" FM_STATE_OVERRIDE="$state" \
+      "$ROOT/bin/fm-watch-arm.sh" --stop >/dev/null 2>&1 || true
+  done < "$FM_TEST_WATCHER_REGISTRY"
+  rm -f "$FM_TEST_WATCHER_REGISTRY"
+}
+
 # Ceiling on how long a fixture's blocking stub may keep polling. A stub that
 # waits for a trigger file by re-running `sleep` is a high-frequency source of
 # process spawns, and one that outlives its test - because the test was killed
@@ -170,15 +215,26 @@ fm_test_reap_procevent_homes() {
 FM_TEST_STUB_MAX_BLOCK_SECONDS=${FM_TEST_STUB_MAX_BLOCK_SECONDS:-120}
 export FM_TEST_STUB_MAX_BLOCK_SECONDS
 
+# Remove a fixture tree even when it holds a read-only directory, such as the
+# spawn-owned state/<id>.git-hooks strip directory.
+fm_test_remove_tree() {
+  local dir=$1
+  if [ -d "$dir" ] && [ ! -L "$dir" ]; then
+    find "$dir" -type d -exec chmod u+rwx {} + 2>/dev/null || true
+  fi
+  rm -rf "$dir"
+}
+
 fm_test_cleanup() {
   local d
+  fm_test_reap_watchers
   fm_test_reap_procevent_homes
   for d in "${FM_TEST_CLEANUP_DIRS[@]:-}"; do
-    [ -n "$d" ] && rm -rf "$d"
+    [ -n "$d" ] && fm_test_remove_tree "$d"
   done
   if [ -f "$FM_TEST_CLEANUP_REGISTRY" ]; then
     while IFS= read -r d; do
-      [ -n "$d" ] && rm -rf "$d"
+      [ -n "$d" ] && fm_test_remove_tree "$d"
     done < "$FM_TEST_CLEANUP_REGISTRY"
     rm -f "$FM_TEST_CLEANUP_REGISTRY"
   fi
@@ -232,10 +288,7 @@ fm_test_reap_orphans() {
     mtime=$(stat -c %Y "$marker" 2>/dev/null || stat -f %m "$marker" 2>/dev/null) || continue
     [ $((now - mtime)) -ge "$FM_TEST_ORPHAN_MAX_AGE_SECONDS" ] || continue
     dir=$(dirname "$marker")
-    if [ -d "$dir" ] && [ ! -L "$dir" ]; then
-      find "$dir" -type d -exec chmod u+rwx {} + 2>/dev/null || true
-    fi
-    rm -rf "$dir"
+    fm_test_remove_tree "$dir"
   done
 }
 
@@ -275,6 +328,10 @@ fi
 # lets a live guard drive the real fm-spawn/fm-send/fm-teardown from inside a
 # no-mistakes gate worktree instead of being refused by
 # bin/fm-gate-refuse-lib.sh.
+#
+# Every path that lets a live run proceed also exports DISABLE_AUTOUPDATER=1,
+# so a live harness invocation never lets Claude Code's auto-updater rewrite
+# the installed binary out from under the host.
 
 fm_live_gate() {
   local policy=$1 vars=$2
@@ -338,6 +395,7 @@ fm_live_gate() {
     exit 0
   done
 
+  export DISABLE_AUTOUPDATER=1
   return 0
 }
 
@@ -457,6 +515,34 @@ SH
   chmod +x "$fakebin/fm-crash-inject"
 }
 
+# fm_fake_blind_ancestry <fakebin>
+# Blind the parent-chain walks: a query of the FIELD-FIRST per-pid form those walks
+# use - `ps -o comm=|args=|ppid= -p <pid>`, the shape in bin/fm-harness.sh,
+# bin/fm-session-lock-lib.sh, bin/fm-sessionstart-nudge.sh and bin/fm-backend.sh's
+# cmux ancestor detection - reports a bash ancestor terminating at pid 1, so ancestry
+# proves nothing and the marker a case sets is the only evidence left. A case that pins
+# its harness with a marker (CLAUDECODE=1 and friends) needs this, because a structural
+# ancestor of a DIFFERENT harness outranks a marker - without it, the harness the SUITE
+# was launched from decides the verdict.
+# Every other ps query reaches the real ps untouched, and the pid-first form is
+# deliberately among them: bin/fm-tmux-lib.sh and bin/backends/tmux.sh read pane and
+# cursor identity with `ps -p <pid> -o args=`, so intercepting that shape too would make
+# a pane assertion under a PATH-wide blind read `bash` and reject every cursor pane.
+fm_fake_blind_ancestry() {
+  local fakebin=$1 real_ps
+  real_ps=$(command -v ps) || return 1
+  cat > "$fakebin/ps" <<SH
+#!/usr/bin/env bash
+case "\$*" in
+  '-o comm= -p '*) printf '%s\n' bash ;;
+  '-o args= -p '*) printf '%s\n' bash ;;
+  '-o ppid= -p '*) printf '%s\n' 1 ;;
+  *) exec "$real_ps" "\$@" ;;
+esac
+SH
+  chmod +x "$fakebin/ps"
+}
+
 # fm_fake_version_tool <fakebin> <tool> <override-env-var> <default-version>
 # The stub answers `--version` with <override-env-var> when that variable is set
 # and non-empty, and with <default-version> otherwise; every other invocation
@@ -472,6 +558,86 @@ fi
 exit 0
 SH
   chmod +x "$fakebin/$tool"
+}
+
+# fm_fake_claude_outside_read_gate <fakebin>
+# Drops a claude stub that models the 2.1.257 outside-read gate instead of
+# answering like a generic exit-0 tool: it resolves its own cwd and every
+# --add-dir argument to real paths, then fails with "would prompt" unless each
+# required Firstmate channel path lies within one of them - the launch record
+# its own doorbell argument names, plus every path listed one per line in the
+# file FM_FAKE_CLAUDE_REQUIREMENTS names (absent file or unset var: doorbell
+# record only). Paths need not exist; a nonexistent leaf resolves through its
+# parent so a lazily created channel dir is still checked. Evaluating the
+# captured launch command under this binary exercises the real spawn output
+# the way Claude Code's working-directory check would consume it.
+fm_fake_claude_outside_read_gate() {
+  local fakebin=$1
+  cat > "$fakebin/claude" <<'SH'
+#!/usr/bin/env bash
+set -u
+cwd=$(pwd -P) || exit 3
+allowed=$cwd
+argv=("$@")
+last=${argv[$((${#argv[@]} - 1))]:-}
+for ((i = 0; i < ${#argv[@]}; i++)); do
+  if [ "${argv[$i]}" = --add-dir ]; then
+    d=${argv[$((i + 1))]:-}
+    [ -n "$d" ] || { echo "fake-claude: --add-dir with no value" >&2; exit 3; }
+    r=$(cd "$d" 2>/dev/null && pwd -P) || r=$d
+    allowed="$allowed
+$r"
+    i=$((i + 1))
+  fi
+done
+resolve_target() {  # <path> -> real path even when the leaf does not exist yet
+  local p=$1
+  if [ -d "$p" ]; then
+    (cd "$p" && pwd -P)
+  elif pdir=$(cd "$(dirname "$p")" 2>/dev/null && pwd -P); then
+    printf '%s/%s\n' "$pdir" "$(basename "$p")"
+  else
+    return 1
+  fi
+}
+covered() {  # <path>
+  local want dir
+  want=$(resolve_target "$1") || return 1
+  while IFS= read -r dir; do
+    case "$want/" in "$dir/"*) return 0 ;; esac
+  done <<EOF2
+$allowed
+EOF2
+  return 1
+}
+failures=
+record=$(printf '%s' "$last" | sed -n "s/.*: Firstmate operational input waiting: read '\([^']*\)'.*/\1/p")
+while IFS= read -r need; do
+  [ -n "$need" ] || continue
+  covered "$need" || failures="$failures$need
+"
+done <<EOF3
+$record
+$(cat "${FM_FAKE_CLAUDE_REQUIREMENTS:-/dev/null}" 2>/dev/null)
+EOF3
+if [ -n "$failures" ]; then
+  printf 'fake-claude: would prompt outside working directories on:\n%s' "$failures" >&2
+  exit 42
+fi
+exit 0
+SH
+  chmod +x "$fakebin/claude"
+}
+
+# fm_eval_launch <launch-command> <pane-path> <fakebin> [VAR=val ...]
+# Runs a captured launch command the way the destination pane would: from the
+# pane's cwd with the fakebin on PATH and any extra environment assignments.
+# The command is text the suite already received from the spawn, so bash -c
+# reproduces the pane's shell read of it.
+fm_eval_launch() {
+  local launch=$1 pane=$2 fakebin=$3
+  shift 3
+  (cd "$pane" && env "$@" PATH="$fakebin:${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}" bash -c "$launch")
 }
 
 # --- portable file timestamps -----------------------------------------------

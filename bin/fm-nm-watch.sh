@@ -64,7 +64,7 @@ cmd_arm() {  # <task-id>
         --repeat --action-env "FM_HOME=$FM_HOME" \
         --condition "$SCRIPT_DIR/fm-nm-state-condition.sh" "$dir" "$STATE/$id.nm-state" \
         --action "$SCRIPT_DIR/fm-send.sh" "$id" \
-          "no-mistakes state changed: run \`no-mistakes axi status\` where your run executes, append \`resolved: run returned\`, and answer the parked gate." \
+          "no-mistakes state changed: run \`no-mistakes axi status\` where your run executes, append \`resolved [at=<epoch>]: run returned\`, and answer the parked gate." \
         2>&1 >/dev/null); then
       echo "armed: when-nm-state-$id (pipeline-state watch on $dir)"
       return 0
