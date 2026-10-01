@@ -1508,27 +1508,33 @@ detect_code_root_backlog_fork() {
 # in the same actionable-diagnostic style as every other line above, so a
 # state root that regressed to group/world-writable (022) is visible before
 # it silently stops every registered source from ever being polled again.
-# `fm-procevent.sh list` triggers the exact same check fm-procevent.sh applies
-# to itself; its only write is the owner-lease refresh the watcher's reconcile
-# performs every cycle.
+# The check is the read-only diagnosis fm-procevent.sh applies to itself
+# (fm_procevent_private_directory_diagnose), run in a subshell so the library
+# globals stay out of bootstrap. It must stay read-only: this runs in
+# FM_BOOTSTRAP_DETECT_ONLY sessions, which never touch state or wait on locks.
 #
 # "chmod 750" only actually fixes the mode-bits case; the same check also
 # fails when state/ is owned by another user, and an operator running the
-# printed chmod there would see the problem persist with no hint why.
-# fm-procevent.sh's die message carries the specific reason
-# (fm_procevent_private_directory_diagnose); read it back out of its stderr
-# rather than duplicating the check here.
+# printed chmod there would see the problem persist with no hint why, so the
+# diagnosis picks the message.
 detect_procevent_state_root() {
   [ -d "$STATE/procevent" ] || return 0
-  local err
-  err=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-procevent.sh" list 2>&1 >/dev/null) && return 0
-  case "$err" in
-    *'reason: bad-mode'*)
+  local reason
+  reason=$(
+    # shellcheck source=bin/fm-pr-lib.sh disable=SC1091
+    . "$SCRIPT_DIR/fm-pr-lib.sh"
+    # shellcheck source=bin/fm-procevent-lib.sh disable=SC1091
+    . "$SCRIPT_DIR/fm-procevent-lib.sh"
+    fm_procevent_private_directory_diagnose "$STATE" 0 1
+  ) || return 0
+  case "$reason" in
+    ok|'') ;;
+    bad-mode)
       echo "PROCEVENT: process-event state root is not a private directory - chmod 750 $STATE to resume polling its registered sources" ;;
-    *'reason: not-owned'*)
+    not-owned)
       echo "PROCEVENT: process-event state root ($STATE) is not owned by the current user - chmod will not fix this; fix ownership to resume polling its registered sources" ;;
     *)
-      echo "PROCEVENT: process-event state root is not usable, so its registered sources are not being polled - $err" ;;
+      echo "PROCEVENT: process-event state root is not usable ($reason), so its registered sources are not being polled" ;;
   esac
 }
 
