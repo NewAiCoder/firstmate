@@ -534,10 +534,10 @@ test_ship_briefs_forbid_manual_issue_close_and_board_edits() {
   done
 
   brief="$home/data/brief-noclose-nm/brief.md"
-  assert_grep "Append this sentence to the \`--intent\` string you pass to no-mistakes" "$brief" \
-    "no-mistakes DOD must tell the worker to append the manual-close ban into --intent"
-  assert_grep "the one exception to the exclusion above" "$brief" \
-    "no-mistakes DOD must mark the manual-close ban as an explicit exception to the --intent exclusion rule"
+  assert_grep "owns one fixed sentence that you append to the \`--intent\` string" "$brief" \
+    "no-mistakes DOD must point the worker at the launch overlay's manual-close sentence for --intent"
+  assert_no_grep "Never run \`gh issue close\`, \`gh issue reopen\`, or any \`gh project\` command - issues close through the PR body's \`closes #N\` on merge, and the project board is not used\.\"" "$brief" \
+    "no-mistakes DOD must not duplicate the overlay-owned --intent sentence"
 
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-noclose-scout some-proj --scout >/dev/null 2>&1
   brief="$home/data/brief-noclose-scout/brief.md"

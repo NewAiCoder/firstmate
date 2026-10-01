@@ -563,7 +563,7 @@ EOF
 # public brief/spawn/promote path. Filling both subsections lets the spawn
 # delivery checks proceed (the fake tmux still fails later).
 test_spawn_and_promote_require_filled_task_subsections() {
-  local rec home proj fakebin out status id brief meta intent_body spec_body authorized
+  local rec home proj fakebin out status id brief meta intent_body spec_body authorized overlay
   rec=$(make_home subsections)
   IFS='|' read -r home proj fakebin <<EOF
 $rec
@@ -676,6 +676,11 @@ EOF
   assert_grep "The Definition of done's rule that \`--intent\` must be self-sufficient still governs" \
     "$home/data/$id/launch-brief.md" \
     "migrated launch contract's overlay dropped the self-sufficiency pointer"
+  overlay=$(awk '$0 == "# Current no-mistakes intent contract" { emit=1 } emit { print }' "$home/data/$id/launch-brief.md")
+  assert_contains "$overlay" "append this one fixed sentence to the \`--intent\` string, verbatim, as the sole exception" \
+    "launch overlay did not tell the worker to append the manual-close ban to --intent"
+  assert_contains "$overlay" "Never run \`gh issue close\`, \`gh issue reopen\`, or any \`gh project\` command - issues close through the PR body's \`closes #N\` on merge, and the project board is not used." \
+    "launch overlay dropped the manual issue-close ban sentence"
 
   id=delivery-legacy-unmarked-no-mistakes
   mkdir -p "$home/data/$id"
