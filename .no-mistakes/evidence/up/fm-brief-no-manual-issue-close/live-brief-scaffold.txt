@@ -1,0 +1,7 @@
+== ship nm brief: rule 8 ==
+81:8. Never run `gh issue close`, `gh issue reopen`, or any `gh project` command - issues close through
+82-   the PR body's `closes #N` on merge, and the project board is not used.
+== nm DOD intent bullet ==
+128:- The current no-mistakes intent contract, wherever it was delivered to you, owns one fixed sentence that you append to the `--intent` string after the captain's words, as the one exception to the exclusion above; its wording is not repeated here. The pipeline's own build/review/fix seats are spawned from `--intent` alone and never see this brief, so appending it there is the only way they inherit the ban; this is in addition to, not instead of, your own obligation under rule 8 above.
+== scout brief gh issue close/gh project count ==
+0
