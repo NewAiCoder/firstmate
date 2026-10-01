@@ -24,8 +24,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
 
 # The scalars that mean "the state changed". status and outcome are proven to
-# exist (fm_nm_run_is_active reads them); step and round are best-effort.
-PROJECTION_KEYS="status outcome step round"
+# exist (fm_nm_run_is_active reads them); findings is best-effort. Progress
+# lives in the steps table, not in a top-level step or round, so projection()
+# also folds that table.
+PROJECTION_KEYS="status outcome findings"
 PROBE_TIMEOUT="${FM_NM_STATE_PROBE_TIMEOUT:-45}"
 
 # Sentinel projection for "no no-mistakes run exists here yet" (the watched
@@ -38,6 +40,22 @@ PROBE_TIMEOUT="${FM_NM_STATE_PROBE_TIMEOUT:-45}"
 # no-mistakes itself uses for this state; any other probe failure remains a
 # genuine error.
 NO_RUN_PROJECTION="no-run"
+
+# The `steps[N]{step,status,...}:` table of captured `axi status` output $1 as
+# name:status pairs. Only the first two columns are kept: duration_ms churns
+# on every poll, while a step moving between running, awaiting_approval and
+# completed is exactly the change the watch exists to see.
+steps_fold() {  # <toon-output>
+    printf '%s\n' "$1" | awk '
+        /^[ \t]*steps\[[0-9]+\]\{/ { hdr = index($0, "steps"); inblock = 1; next }
+        inblock {
+            match($0, /[^ \t]/)
+            if (RSTART == 0 || RSTART <= hdr) { inblock = 0; next }
+            split($0, f, ",")
+            gsub(/^[ \t"]+|[ \t"]+$/, "", f[1]); gsub(/^[ \t"]+|[ \t"]+$/, "", f[2])
+            printf "%s%s:%s", (n++ ? "," : ""), f[1], f[2]
+        }'
+}
 
 projection() {  # <worktree>
     local wt=$1 out rc key value line=''
@@ -54,7 +72,7 @@ projection() {  # <worktree>
         value=$(fm_nm_strip_quotes "$(fm_nm_field "$out" "$key")")
         line="$line$key=$value;"
     done
-    printf '%s\n' "$line"
+    printf '%s\n' "${line}steps=$(steps_fold "$out");"
 }
 
 if [ "${1:-}" = "--projection" ]; then

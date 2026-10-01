@@ -29,9 +29,28 @@ mkdir -p "$TMP/wt"
 git -C "$TMP/wt" init -q
 git -C "$TMP/wt" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 
-printf 'status: running\nstep: review\nround: 1\nelapsed: 12s\n' > "$TMP/a.toon"
-printf 'status: running\nstep: review\nround: 1\nelapsed: 999s\n' > "$TMP/b.toon"
-printf 'status: parked\nstep: review\nround: 2\nelapsed: 4s\n' > "$TMP/c.toon"
+# Shape recorded from `no-mistakes axi status` (tests/captures/): progress is in
+# the steps table, and the top-level status stays `running` while a step is
+# parked at a gate.
+write_status() {  # <file> <ci-status> <ci-duration-ms> <active-for>
+  cat > "$1" <<TOON
+run:
+  id: "01TESTRUN"
+  branch: fm/some-task
+  status: running
+  head: 146a90ee
+  findings: 6 info
+  steps[3]{step,status,findings,duration_ms}:
+    review,completed,0,2396206
+    test,completed,0,1245156
+    ci,$2,0,$3
+  active_steps[1]{step,status,active_for,round_active_for,last_activity,agent_pid,round}:
+    ci,running,$4,$4,"quiet","",starting
+TOON
+}
+write_status "$TMP/a.toon" running 0 12s
+write_status "$TMP/b.toon" running 999 4h28m
+write_status "$TMP/c.toon" awaiting_approval 999 4h28m
 
 SNAP="$TMP/snap"
 
@@ -40,10 +59,10 @@ check "first call writes the snapshot and does not fire" 1 "$?"
 if [ -s "$SNAP" ]; then echo "ok - snapshot written"; else echo "FAIL - no snapshot"; FAIL=1; fi
 
 NM_STUB_OUT="$TMP/b.toon" bash "$SCRIPT" "$TMP/wt" "$SNAP"
-check "elapsed churn alone does not fire" 1 "$?"
+check "elapsed and duration churn alone does not fire" 1 "$?"
 
 NM_STUB_OUT="$TMP/c.toon" bash "$SCRIPT" "$TMP/wt" "$SNAP"
-check "a real state change fires" 0 "$?"
+check "a step moving from running to awaiting_approval fires while top-level status stays running" 0 "$?"
 
 NM_STUB_OUT="$TMP/c.toon" bash "$SCRIPT" "$TMP/wt" "$SNAP"
 check "the same state twice does not fire again" 1 "$?"
