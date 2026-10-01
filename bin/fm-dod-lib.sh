@@ -219,6 +219,7 @@ fm_brief_marked_captain_words() {  # <task-body>
 # so the pipeline's own seats (spawned from `--intent` alone) inherit it. Both the
 # spawn overlay and the promoted ship instructions emit it from here.
 fm_intent_append_instruction() {
+  # shellcheck disable=SC2016  # Literal backticks must remain unexpanded.
   printf '%s\n' 'After those words, append this one fixed sentence to the `--intent` string, verbatim, as the sole exception to the exclusion above: "Never run `gh issue close`, `gh issue reopen`, or any `gh project` command - issues close through the PR body'"'"'s `closes #N` on merge, and the project board is not used." The pipeline'"'"'s own build/review/fix seats are spawned from `--intent` alone and never see this brief, so this sentence is how they inherit the ban.'
 }
 
