@@ -2727,23 +2727,19 @@ while :; do
     if procevent_reconcile_err=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-procevent.sh" reconcile 2>&1 >/dev/null); then
       rmdir "$procevent_reconcile_marker" 2>/dev/null || true
     elif [ -n "$procevent_reconcile_err" ]; then
-      # The marker is a directory: mkdir never follows a symlink planted in a
-      # group-writable state root and atomically says whether this episode was
-      # already reported. Anything else at that path is untrusted - unlink it
-      # (rm -f removes a symlink itself, never its target) and still wake, so
-      # the failure is never silent.
-      procevent_reconcile_report=0
-      if mkdir "$procevent_reconcile_marker" 2>/dev/null; then
-        procevent_reconcile_report=1
-      elif [ -L "$procevent_reconcile_marker" ] || [ ! -d "$procevent_reconcile_marker" ]; then
-        triage_log "procevent reconcile marker was not a plain directory; replaced it"
-        rm -f "$procevent_reconcile_marker" 2>/dev/null || true
-        mkdir "$procevent_reconcile_marker" 2>/dev/null || true
-        procevent_reconcile_report=1
-      fi
-      if [ "$procevent_reconcile_report" = 1 ]; then
+      # The marker is a directory, created only after the wake is queued, so a
+      # failed append leaves no marker and the next cycle retries the alert.
+      # mkdir never follows a symlink planted in a group-writable state root.
+      # Anything but a plain directory at that path is untrusted: unlink it
+      # (rm -f removes a symlink itself, never its target) and still wake.
+      if [ -L "$procevent_reconcile_marker" ] || [ ! -d "$procevent_reconcile_marker" ]; then
+        if [ -e "$procevent_reconcile_marker" ] || [ -L "$procevent_reconcile_marker" ]; then
+          triage_log "procevent reconcile marker was not a plain directory; replaced it"
+          rm -f "$procevent_reconcile_marker" 2>/dev/null || true
+        fi
         reason="check: process-event reconcile failed: $(printf '%s' "$procevent_reconcile_err" | tail -n 1)"
         fm_wake_append check procevent-reconcile "$reason" || exit 1
+        mkdir "$procevent_reconcile_marker" 2>/dev/null || true
         touch "$STATE/.last-check"
         wake "$reason"
       fi

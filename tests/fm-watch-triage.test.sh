@@ -6217,6 +6217,37 @@ test_procevent_reconcile_marker_never_follows_a_symlink() {
   pass "a symlink planted at the reconcile-failed marker is replaced, never followed, and still wakes"
 }
 
+test_procevent_reconcile_failed_append_leaves_no_marker() {
+  local dir state out pid marker rc=0
+  dir=$(make_case procevent-reconcile-append-fail); state="$dir/state"; out="$dir/watch.out"
+  pe_case "$dir" register lavish reconcile-append-src -- \
+    /bin/sh -c 'printf "session:\n  file: /a.html\n  status: waiting\n"' >/dev/null \
+    || fail "the fixture could not register a process-event source"
+  marker="$state/.procevent-reconcile-failed"
+  mkdir "$state/.wake-queue"
+  chmod 775 "$state"
+
+  procevent_watch_bg "$dir" "$out"
+  pid=$!
+  wait_for_exit "$pid" 100 || rc=$?
+  chmod 700 "$state"
+  reap "$pid"
+  [ ! -e "$marker" ] && [ ! -L "$marker" ] \
+    || fail "a failed wake append still recorded the episode as reported"
+  rmdir "$state/.wake-queue"
+
+  # The queue works again: the next cycle must still deliver the alert.
+  chmod 775 "$state"
+  procevent_watch_bg "$dir" "$out.retry"
+  pid=$!
+  wait_for_exit "$pid" 100 || { chmod 700 "$state"; fail "the retry cycle did not end: $(cat "$out.retry")"; }
+  chmod 700 "$state"
+  grep -F "check: process-event reconcile failed:" "$out.retry" >/dev/null \
+    || fail "the alert was lost after a failed append: $(cat "$out.retry")"
+  [ -d "$marker" ] || fail "a delivered alert did not record the episode marker"
+  pass "a failed wake append leaves no marker, so the next cycle retries the alert"
+}
+
 # --- heartbeat: no-change absorbed, backstop surfaces a missed status --------
 
 test_heartbeat_no_change_absorbed() {
@@ -6826,6 +6857,7 @@ test_procevent_surface_crash_boundaries
 test_procevent_marker_failure_exits_and_replays
 test_procevent_reconcile_failure_wakes_once_and_recovers
 test_procevent_reconcile_marker_never_follows_a_symlink
+test_procevent_reconcile_failed_append_leaves_no_marker
 test_heartbeat_no_change_absorbed
 test_heartbeat_backstop_surfaces_unsurfaced_status
 test_heartbeat_backstop_surfaces_a_masked_status
