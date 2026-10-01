@@ -1,0 +1,40 @@
+ok - unpinned branches follow main model changes live while pinned branches stay fixed
+ok - supervision-model command persists the captain's pick and rebinds the live branch
+ok - supervision-model opens a bounded searchable list, follow main first, and pins the branch alone
+ok - branch model picker keeps follow main first and filters the eligible catalog
+ok - the effort pin binds every branch build, and clearing it returns the branch to main's effort
+ok - unpinned branches follow main effort changes live while pinned branches stay fixed
+ok - an extension-registered provider resolves in the isolated branch runtime
+ok - supervision-model runs an effort picker after the model picker and persists both independently
+ok - an unusable model pin rejects to watcher fallback and an unparseable one is treated as no pin
+ok - replacement activation cleans old branch leases and retries failed cleanup
+ok - branch activates on a cold start once the lock is acquired, never before
+ok - queued wakes and mirrors stop mutating branch state after lock ownership is lost
+ok - stale reports, shells, mirrors, cursors, leases, and prompts perform no side effects
+ok - a Pi session that does not own the lock accepts nothing and mutates no branch state
+ok - an extension rebind re-mirrors undelivered dialog instead of dropping it
+ok - outcome delivery keeps the event loop running and interleaved reports stay ordered and exactly once
+ok - a session replaced mid-delivery cancels cleanly and the stored outcome still arrives exactly once
+ok - a failing store script surfaces to the branch and its outcome is neither lost nor delivered twice
+ok - a failed cursor write re-delivers a routine note exactly once more while a captain outcome stays deduplicated
+FM_TEST_END 2026-10-01T19:29:21Z tests/fm-pi-branch-extension.test.sh exit=0 duration_ms=86563 gate_skip=false
+FM_TEST_BEGIN 2026-10-01T19:29:21Z tests/fm-pi-windows-shell-invocation.test.sh family=unclassified expected_gate_skip=none
+skip: native Windows Node required
+fm-test-run: gate skip: tests/fm-pi-windows-shell-invocation.test.sh: native Windows Node required
+FM_TEST_END 2026-10-01T19:29:21Z tests/fm-pi-windows-shell-invocation.test.sh exit=0 duration_ms=74 gate_skip=true
+FM_TEST_BEGIN 2026-10-01T19:29:21Z tests/fm-ci-workflow.test.sh family=unclassified expected_gate_skip=none
+not ok - ruby is required to parse .github/workflows/ci.yml as YAML
+FM_TEST_END 2026-10-01T19:29:21Z tests/fm-ci-workflow.test.sh exit=1 duration_ms=47 gate_skip=false
+FM_TEST_SUMMARY total=8 failed=4 skipped_gate=1 duration_ms=861458
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=3 duration_ms=75456 failed=2
+FM_TEST_SUMMARY_FAMILY family=standalone count=1 duration_ms=86563 failed=0
+FM_TEST_SUMMARY_FAMILY family=unclassified count=2 duration_ms=121 failed=1
+FM_TEST_SUMMARY_FAMILY family=watcher-wake-lock count=2 duration_ms=778258 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-watch-triage.test.sh duration_ms=729883
+FM_TEST_SLOWEST rank=2 script=tests/fm-pi-branch-extension.test.sh duration_ms=86563
+FM_TEST_SLOWEST rank=3 script=tests/fm-pi-watch-extension.test.sh duration_ms=48375
+FM_TEST_SLOWEST rank=4 script=tests/fm-task-delivery.test.sh duration_ms=44342
+FM_TEST_SLOWEST rank=5 script=tests/fm-calm-pi-extension.test.sh duration_ms=31088
+FM_TEST_SLOWEST rank=6 script=tests/fm-pi-windows-shell-invocation.test.sh duration_ms=74
+FM_TEST_SLOWEST rank=7 script=tests/fm-ci-workflow.test.sh duration_ms=47
+FM_TEST_SLOWEST rank=8 script=tests/fm-pi-primary-types.test.sh duration_ms=26
