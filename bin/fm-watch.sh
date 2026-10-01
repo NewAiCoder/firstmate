@@ -2726,10 +2726,13 @@ while :; do
     procevent_reconcile_marker="$STATE/.procevent-reconcile-failed"
     if procevent_reconcile_err=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-procevent.sh" reconcile 2>&1 >/dev/null); then
       rm -f "$procevent_reconcile_marker" 2>/dev/null || true
-    elif [ -n "$procevent_reconcile_err" ] && [ ! -e "$procevent_reconcile_marker" ]; then
+    elif [ -n "$procevent_reconcile_err" ] \
+      && [ ! -e "$procevent_reconcile_marker" ] && [ ! -L "$procevent_reconcile_marker" ]; then
       reason="check: process-event reconcile failed: $(printf '%s' "$procevent_reconcile_err" | tail -n 1)"
       fm_wake_append check procevent-reconcile "$reason" || exit 1
-      : > "$procevent_reconcile_marker" 2>/dev/null || true
+      # Noclobber creates with O_EXCL, which never follows a symlink planted
+      # in a group-writable state root; rm -f below unlinks a symlink itself.
+      (set -C; : > "$procevent_reconcile_marker") 2>/dev/null || true
       touch "$STATE/.last-check"
       wake "$reason"
     fi

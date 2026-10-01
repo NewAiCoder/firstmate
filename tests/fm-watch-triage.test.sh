@@ -6190,6 +6190,36 @@ test_procevent_reconcile_failure_wakes_once_and_recovers() {
   pass "a group-writable state root wakes exactly once per failure episode and clears once recovered"
 }
 
+test_procevent_reconcile_marker_never_follows_a_symlink() {
+  local dir state out pid marker target
+  dir=$(make_case procevent-reconcile-symlink); state="$dir/state"; out="$dir/watch.out"
+  pe_case "$dir" register lavish reconcile-symlink-src -- \
+    /bin/sh -c 'printf "session:\n  file: /a.html\n  status: waiting\n"' >/dev/null \
+    || fail "the fixture could not register a process-event source"
+  marker="$state/.procevent-reconcile-failed"
+  target="$dir/outside-target"
+  ln -s "$target" "$marker"
+  chmod 775 "$state"
+
+  procevent_watch_bg "$dir" "$out"
+  pid=$!
+  wait_poll_cycle "$state" "$pid" >/dev/null 2>&1 || true
+  chmod 700 "$state"
+  reap "$pid"
+  [ ! -e "$target" ] && [ ! -L "$target" ] \
+    || fail "the reconcile marker write followed a planted symlink and created its target"
+  [ -L "$marker" ] || fail "the planted symlink was replaced instead of left untouched"
+
+  # Recovery unlinks the planted link itself and still never creates its target.
+  procevent_watch_bg "$dir" "$out.recovered"
+  pid=$!
+  wait_poll_cycle "$state" "$pid" >/dev/null 2>&1 || true
+  reap "$pid"
+  [ ! -e "$target" ] || fail "recovery created the symlink target"
+  [ ! -L "$marker" ] || fail "recovery did not clear the planted marker symlink"
+  pass "the reconcile-failed marker never follows a symlink planted in the state root"
+}
+
 # --- heartbeat: no-change absorbed, backstop surfaces a missed status --------
 
 test_heartbeat_no_change_absorbed() {
@@ -6798,6 +6828,7 @@ test_procevent_surface_serializes_with_drain
 test_procevent_surface_crash_boundaries
 test_procevent_marker_failure_exits_and_replays
 test_procevent_reconcile_failure_wakes_once_and_recovers
+test_procevent_reconcile_marker_never_follows_a_symlink
 test_heartbeat_no_change_absorbed
 test_heartbeat_backstop_surfaces_unsurfaced_status
 test_heartbeat_backstop_surfaces_a_masked_status
