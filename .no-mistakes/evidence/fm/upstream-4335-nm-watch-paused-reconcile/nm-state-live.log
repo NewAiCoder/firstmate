@@ -1,0 +1,5 @@
+poll 1 exit=1
+poll 2 exit=1
+projection:
+no-run
+exit=0

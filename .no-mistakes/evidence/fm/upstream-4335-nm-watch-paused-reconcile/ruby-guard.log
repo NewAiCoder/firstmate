@@ -1,0 +1,2 @@
+not ok - ruby is required to parse .github/workflows/ci.yml as YAML
+exit=1

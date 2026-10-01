@@ -1,0 +1,4 @@
+ok - arming a task that already has its pipeline-state watch converges instead of refusing
+ok - a pipeline-state watch that cannot be armed leaves a durable check wake
+ok - register-clone records the clone and re-arms the watch on it, refusing unusable paths
+all fm-nm-watch tests passed

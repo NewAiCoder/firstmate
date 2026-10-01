@@ -1,0 +1,4 @@
+fm-dod-wait exit=0
+fm-nm-state-condition exit=0
+fm-nm-watch exit=0
+fm-crew-state exit=0

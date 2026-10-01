@@ -1,0 +1,4 @@
+fm-brief exit=0
+fm-procevent-when exit=0
+fm-daemon exit=0
+fm-watch-triage exit=1

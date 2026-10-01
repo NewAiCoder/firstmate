@@ -1,0 +1,10 @@
+ok - first call writes the snapshot and does not fire
+ok - snapshot written
+ok - elapsed churn alone does not fire
+ok - a real state change fires
+ok - the same state twice does not fire again
+ok - a failing probe is an error, never a true
+ok - no run yet (repo not initialized) is a clean false on first call, not an error
+ok - no run yet stays a clean false on repeated polls
+ok - a run finally appearing after a no-run wait fires
+ok - projection mode runs

@@ -1,0 +1,5 @@
+ok - no foreground sleep prescribed
+ok - the worker is told to end its turn
+ok - the block names this task's watch
+ok - the declared wait is unchanged
+ok - the register-clone command in the block resolves to the real watch script wired to this task id

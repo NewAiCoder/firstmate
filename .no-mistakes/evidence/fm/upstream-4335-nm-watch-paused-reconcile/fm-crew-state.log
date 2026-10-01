@@ -1,0 +1,286 @@
+ok - captured AXI replacement status replays through crew-state
+ok - captured AXI parked status replays through crew-state
+ok - captured AXI failed status replays through crew-state
+ok - captured capped inventory replays selection, ambiguity, and unavailable lookup
+ok - captured status formats reject a synthetic authority transition
+ok - captured completed status yields to synthetic subsequent development
+ok - captured cancelled run leaves fleet inventory unverified without a failure contradiction
+ok - failed-outcome/github/open: terminal delivery uses current disposition
+ok - failed-outcome/github/merged: terminal delivery uses current disposition
+ok - failed-outcome/github/closed: terminal delivery uses current disposition
+ok - failed-outcome/github/unreadable: terminal delivery uses current disposition
+ok - failed-outcome/github/skipped: terminal delivery uses current disposition
+ok - failed-outcome/github/no-identity: terminal delivery uses current disposition
+ok - failed-outcome/gitlab/open: terminal delivery uses current disposition
+ok - failed-outcome/gitlab/merged: terminal delivery uses current disposition
+ok - failed-outcome/gitlab/closed: terminal delivery uses current disposition
+ok - failed-outcome/gitlab/unreadable: terminal delivery uses current disposition
+ok - failed-outcome/gitlab/skipped: terminal delivery uses current disposition
+ok - failed-outcome/gitlab/no-identity: terminal delivery uses current disposition
+ok - failed-outcome/gerrit/open: terminal delivery uses current disposition
+ok - failed-outcome/gerrit/merged: terminal delivery uses current disposition
+ok - failed-outcome/gerrit/closed: terminal delivery uses current disposition
+ok - failed-outcome/gerrit/unreadable: terminal delivery uses current disposition
+ok - failed-outcome/gerrit/skipped: terminal delivery uses current disposition
+ok - failed-outcome/gerrit/no-identity: terminal delivery uses current disposition
+ok - failed-status/github/open: terminal delivery uses current disposition
+ok - failed-status/github/merged: terminal delivery uses current disposition
+ok - failed-status/github/closed: terminal delivery uses current disposition
+ok - failed-status/github/unreadable: terminal delivery uses current disposition
+ok - failed-status/github/skipped: terminal delivery uses current disposition
+ok - failed-status/github/no-identity: terminal delivery uses current disposition
+ok - failed-status/gitlab/open: terminal delivery uses current disposition
+ok - failed-status/gitlab/merged: terminal delivery uses current disposition
+ok - failed-status/gitlab/closed: terminal delivery uses current disposition
+ok - failed-status/gitlab/unreadable: terminal delivery uses current disposition
+ok - failed-status/gitlab/skipped: terminal delivery uses current disposition
+ok - failed-status/gitlab/no-identity: terminal delivery uses current disposition
+ok - failed-status/gerrit/open: terminal delivery uses current disposition
+ok - failed-status/gerrit/merged: terminal delivery uses current disposition
+ok - failed-status/gerrit/closed: terminal delivery uses current disposition
+ok - failed-status/gerrit/unreadable: terminal delivery uses current disposition
+ok - failed-status/gerrit/skipped: terminal delivery uses current disposition
+ok - failed-status/gerrit/no-identity: terminal delivery uses current disposition
+ok - cancelled-outcome/github/open: terminal delivery uses current disposition
+ok - cancelled-outcome/github/merged: terminal delivery uses current disposition
+ok - cancelled-outcome/github/closed: terminal delivery uses current disposition
+ok - cancelled-outcome/github/unreadable: terminal delivery uses current disposition
+ok - cancelled-outcome/github/skipped: terminal delivery uses current disposition
+ok - cancelled-outcome/github/no-identity: terminal delivery uses current disposition
+ok - cancelled-outcome/gitlab/open: terminal delivery uses current disposition
+ok - cancelled-outcome/gitlab/merged: terminal delivery uses current disposition
+ok - cancelled-outcome/gitlab/closed: terminal delivery uses current disposition
+ok - cancelled-outcome/gitlab/unreadable: terminal delivery uses current disposition
+ok - cancelled-outcome/gitlab/skipped: terminal delivery uses current disposition
+ok - cancelled-outcome/gitlab/no-identity: terminal delivery uses current disposition
+ok - cancelled-outcome/gerrit/open: terminal delivery uses current disposition
+ok - cancelled-outcome/gerrit/merged: terminal delivery uses current disposition
+ok - cancelled-outcome/gerrit/closed: terminal delivery uses current disposition
+ok - cancelled-outcome/gerrit/unreadable: terminal delivery uses current disposition
+ok - cancelled-outcome/gerrit/skipped: terminal delivery uses current disposition
+ok - cancelled-outcome/gerrit/no-identity: terminal delivery uses current disposition
+ok - cancelled-status/github/open: terminal delivery uses current disposition
+ok - cancelled-status/github/merged: terminal delivery uses current disposition
+ok - cancelled-status/github/closed: terminal delivery uses current disposition
+ok - cancelled-status/github/unreadable: terminal delivery uses current disposition
+ok - cancelled-status/github/skipped: terminal delivery uses current disposition
+ok - cancelled-status/github/no-identity: terminal delivery uses current disposition
+ok - cancelled-status/gitlab/open: terminal delivery uses current disposition
+ok - cancelled-status/gitlab/merged: terminal delivery uses current disposition
+ok - cancelled-status/gitlab/closed: terminal delivery uses current disposition
+ok - cancelled-status/gitlab/unreadable: terminal delivery uses current disposition
+ok - cancelled-status/gitlab/skipped: terminal delivery uses current disposition
+ok - cancelled-status/gitlab/no-identity: terminal delivery uses current disposition
+ok - cancelled-status/gerrit/open: terminal delivery uses current disposition
+ok - cancelled-status/gerrit/merged: terminal delivery uses current disposition
+ok - cancelled-status/gerrit/closed: terminal delivery uses current disposition
+ok - cancelled-status/gerrit/unreadable: terminal delivery uses current disposition
+ok - cancelled-status/gerrit/skipped: terminal delivery uses current disposition
+ok - cancelled-status/gerrit/no-identity: terminal delivery uses current disposition
+ok - outcome: cancellation without delivery carries no verdict
+ok - status: cancellation without delivery carries no verdict
+ok - selected: cancellation without delivery carries no verdict
+ok - coarse: cancellation without delivery carries no verdict
+ok - no-ci-log: cancellation without delivery carries no verdict
+ok - red-ci: cancellation without delivery carries no verdict
+ok - cancelled-test: cancellation without delivery carries no verdict
+ok - skipped-test: cancellation without delivery carries no verdict
+ok - synthetic cancelled run leaves fleet inventory unverified without a failure contradiction
+ok - cancelled-outcome: terminal delivery reports only observed evidence
+ok - cancelled-status: terminal delivery reports only observed evidence
+ok - skipped-rebase: terminal delivery reports only observed evidence
+ok - cancelled-skipped-rebase: terminal delivery reports only observed evidence
+ok - passed: terminal delivery reports only observed evidence
+ok - active run-step is authoritative
+ok - stale needs-decision over active run is superseded
+ok - stale blocked over active run is superseded
+ok - daemon/timeout blocked claim over a live fixing run reads as run alive
+ok - socket refusal or missing socket over a stale fixing run reports blocked
+ok - socket refusal over a terminal attributed run reports blocked
+ok - socket-down evidence outranks a live run only while it is the log's latest event
+ok - broken-pipe blocker over a live run keeps the plain superseded reading
+ok - genuine daemon-down blocked line still reports blocked
+ok - a busy secondmate keeps its open blocker until that exact key closes
+ok - the most recently opened decision supplies the reported state and detail
+ok - ship and scout terminal declarations supersede stale decisions
+ok - latest status retains legacy completion events and shared captain matching
+ok - latest status subprocess work stays bounded and still reads past a long prose tail
+ok - genuine parked run is not flagged superseded
+ok - the parked human-decision component is derived from the findings table's action column
+ok - scalar gate parked run is not flagged superseded
+ok - gate block parked run is not flagged superseded
+ok - ci-ready status log beats monitoring run
+ok - ci-monitoring run with checks already green surfaces done
+ok - top-level ci status uses ci log green marker
+ok - terminal no-checks ci-monitor marker surfaces done
+ok - base-advance re-arm after green stays checks green
+ok - a green marker before the ci log tail still surfaces done
+ok - pending no-checks ci-monitor marker stays working
+ok - ci-monitoring run with checks not yet green stays working
+ok - a fresh issue after an earlier green reading is not masked
+ok - stale checks-green status log does not mask CI relapse
+ok - ci fixing is not overridden by an earlier green marker
+ok - top-level fixing is not overridden by a stale ci running row
+ok - top-level fixing is not overridden by a stale done log
+ok - terminal passed run is authoritative
+ok - terminal passed-with-override run reads done like a clean pass
+ok - terminal passed-with-skips run reads done with the skip kept visible
+ok - terminal passed run uses matching retirement receipt without forge
+ok - terminal passed no-forge mode preserves local receipt evidence
+ok - terminal passed run with open PR does not claim merged
+ok - terminal passed run PR overrides stale task metadata
+ok - terminal passed run without readable PR identity reports unknown
+ok - terminal passed run reads open GitLab MR state
+ok - terminal passed run reads merged GitLab MR state
+ok - terminal passed run handles failed GitLab read
+ok - terminal passed run reads open Gerrit change state
+ok - terminal passed run reads merged and abandoned Gerrit change state
+ok - terminal passed run handles an unreadable or mismatched Gerrit read
+ok - terminal failed run is authoritative
+ok - orphaned ci monitor after green reads as held-for-merge done
+ok - status-only failed orphaned ci monitor after green reads done
+ok - genuinely failing CI keeps the failed verdict
+ok - a second failed step disqualifies the orphaned-monitor reclassification
+ok - cross-branch run is attributed via the real runs list
+ok - socket refusal over a coarse active run reports blocked
+ok - failed ledger record reads unknown only when the daemon is provably down
+ok - cross-branch attribution picks the branch's most recent row
+ok - a newer failure is not hidden by a live sibling
+ok - runs-list selection keeps the newer failure over an older live row
+ok - an older unfetched live sibling does not hide a newer failure
+ok - two terminal rows keep the existing newest-first precedence
+ok - an unclassifiable status row keeps the ledger's newest-first precedence
+ok - a terminal run with no live sibling is unchanged
+ok - coarse run does not probe another branch's ci log
+ok - another branch's run is ignored, falls back
+ok - unpushed ship done: is current-state blocked
+ok - recorded merged PR reads done under the fleet snapshot's captured meta
+ok - no-mistakes pre-validation done: stays current-state done
+ok - moved remote branch without the named head is current-state blocked
+ok - no run + a busy semantic record reads working, attributed to its source
+ok - a launch parked on a recognized interactive prompt never reads working, closing the absorb path a stale watcher poll depends on
+ok - a converted adapter never reads working from rendered footer text
+ok - grok still reads working through its isolated rendered-tail fallback
+ok - herdr's native busy verdict reads working with no record present
+ok - a herdr CLI that fails to answer reads unknown/unreachable, never gone
+ok - an alive endpoint whose scrollback read failed stays working
+ok - a husk pane (agent gone) still reads gone for reclaim
+ok - a mid-tool-call crew stays working because its record outranks herdr's generation state
+ok - an idle record with idle agent_status stays not-busy (no regression for a human-blocked agent)
+ok - no run + idle pane uses the status-log verb
+ok - no run + idle pane parses keyed status syntax
+ok - no run + idle pane on a paused: status reports state: paused with its reason
+ok - no run + idle pane honors the configured paused verb
+ok - a trailing resolved: event does not corrupt state render (idle stays idle)
+ok - dead window ignores stale status log
+ok - a tmux that fails to answer reads unknown/unreachable, never gone
+ok - closed pane still reports a terminal run-step
+ok - closed pane still reports an active run-step
+ok - no timeout command uses perl bound
+ok - scout skips the run lookup
+ok - torn-down worktree is handled gracefully
+ok - fm-crew-state remote: alive endpoint falls through to the routed status log
+ok - fm-crew-state remote: an idle alive endpoint reads alive, never gone or dead
+ok - fm-crew-state remote: an unreachable host reads unknown-remote, never gone or dead
+ok - fm-crew-state remote: the remote host's own dead verdict is reported truthfully
+ok - missing meta is handled gracefully
+ok - crew_is_provably_working absorbs a validating crew found only via the runs-list fallback
+ok - crew_is_provably_working still surfaces a genuinely stopped crew (safety property preserved)
+ok - usage error exits 2
+ok - historical same-branch rewritten head is not attributed as current
+ok - active run with valid descendant fix head remains current
+ok - local work advanced past run head invalidates attribution
+ok - pipeline-owned active run binds without head equality and beats the failed row
+ok - a genuinely failed run with no later run is not hidden
+ok - coarse scan anchors the unresolvable active row instead of falling to an older one
+ok - coarse scan with a mismatched anchor stays unknown and lets the pane answer
+ok - coarse terminal row at a foreign head is not attributed
+ok - an executing run binds regardless of branch_sync state
+ok - a parked run keeps the strict head rule without pipeline_owned
+ok - run_parked_scalar_gate_running keeps the strict head rule despite its live status word
+ok - run_parked_in_gate_block keeps the strict head rule despite its live status word
+ok - the exemption never applies to a terminal run
+ok - missing run head falls back instead of matching by branch
+ok - active fix round with an unfetched pipeline head reads working
+ok - unanchored unverifiable active row is attributed because it is live
+ok - unresolvable terminal row never reads as current
+ok - runs-list continuation attribution works when axi answers another branch
+ok - herdr stale registration over a shell-only pane reads agent gone, not alive
+ok - herdr stale working record never reports a shell-only pane busy
+ok - capped overview retains both competing same-branch run ids
+ok - same-branch identity survives both runs falling outside the overview
+ok - a capped overview with zero same-branch rows reports absent, not unreadable
+ok - no run for this branch beside a live run elsewhere reads absent, not unreadable
+ok - the capped inventory reader is bounded by the crew read budget
+ok - a repo spelling the inventory does not record reads unreadable
+ok - a linked worktree green PR in merge monitoring reads held for merge
+ok - complete inventory preserves the replacement gate without writes
+ok - missing complete-inventory failure reports unknown
+ok - corrupt complete-inventory failure reports unknown
+ok - schema complete-inventory failure reports unknown
+ok - repo complete-inventory failure reports unknown
+ok - count complete-inventory failure reports unknown
+ok - norepo complete-inventory failure reports unknown
+ok - R6 complete selection ignores unrelated branch semantics
+ok - R6 requested branches use exact identity without a whitelist
+ok - R6 capped inventory ignores unrelated semantics and names both ids
+ok - R6 complete identity lookup precedes partial-row semantic rejection
+ok - R6 capped inventory preserves quoted requested-branch identity
+ok - R6 structural completeness and requested-run validation remain enforced
+ok - R5 complete inventory without Python keeps the replacement gate
+ok - R5 complete ambiguity without Python names both ids
+ok - R5 capped lookup without Python preserves available ids
+ok - R5 capped lookup without SQLite support preserves available ids
+ok - R1 both directions of inventory liveness disagreement read unknown
+ok - R2 uninitialized busy workers retain pane reporting
+ok - R2 uninitialized idle workers retain status reporting
+ok - R3 historical inventory yields to the current busy pane
+ok - R3 historical inventory yields to current worker status
+ok - superseded cancelled run preserves the replacement review gate
+ok - a live rebased run beats an older failed run at the local head
+ok - pending run with a rebased head reads working
+ok - running run with a rebased head reads working
+ok - legacy live rebased run is authoritative over an older failed row
+ok - legacy surface binds a fixing run at a rebased head
+ok - legacy surface binds a ci run at a rebased head
+ok - an unproven record at a diverged head does not answer for the crew
+ok - an unproven record with a dead daemon never overrides a busy pane
+ok - an ordinary blocked tip over a coarse live row keeps the superseded reading
+ok - a socket-refused blocker survives the dead-daemon verdict
+ok - an ordinary blocked tip survives the dead-daemon verdict
+ok - a parked gate survives a dead daemon with its findings intact
+ok - an unproven record at a diverged head does not answer on the selected route
+ok - a live record at a diverged head binds while the daemon answers
+ok - the anchored continuation binds while the daemon answers
+ok - a head-tied coarse record keeps its working reading and its original note
+ok - a coarse failed record with a dead daemon reads unknown
+ok - the selected-run anchored continuation reports the dead daemon, not an identity failure
+ok - the selected-run anchored continuation binds while the daemon answers
+ok - the selected route keeps an anchored parked run's gate with a dead daemon
+ok - an open decision survives the dead-daemon verdict on the selected route
+ok - a coarse pending ledger word reads unknown
+ok - an unanswered probe never turns a failed coarse record into a gate
+ok - the selected-route dead-daemon verdict names the run once
+ok - a head-tied row reads working when axi names the self run
+ok - a head-tied row reads working when axi names the other run
+ok - a head-tied coarse row is exempt even when the record head diverged
+ok - an unrecognised ledger word keeps the ordinary supersede note
+ok - an unanswered daemon probe leaves a live rebased run bound
+ok - a head-tied coarse live row is exempt from the dead-daemon verdict
+ok - a coarse live row over an open decision keeps the original supersede note
+ok - a coarse live row at a rebased head is not attributed
+ok - a terminal run at a diverged head keeps the strict head rule
+ok - competing live runs report unknown with both run ids
+ok - newer failed run remains failed beside an older live run
+ok - missing run selection reports unknown with candidate ids
+ok - wrong-id run selection reports unknown with candidate ids
+ok - wrong-branch run selection reports unknown with candidate ids
+ok - wrong-head run selection reports unknown with candidate ids
+ok - missing-status run selection reports unknown with candidate ids
+ok - malformed-table run selection reports unknown with candidate ids
+ok - inventory-error run selection reports unknown with candidate ids
+ok - selected-error run selection reports unknown with candidate ids
+ok - legacy conflicting run records report unknown
+ok - a paused: line claiming a no-mistakes run with no run found reports unknown
+ok - a registered clone's run is authoritative over the worker's paused: line
+all fm-crew-state tests passed
