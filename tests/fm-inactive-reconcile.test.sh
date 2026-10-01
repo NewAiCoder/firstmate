@@ -881,7 +881,7 @@ make_real_crew_state_case() {  # <name> -> echoes case dir
 #!/usr/bin/env bash
 set -u
 case "${1:-}" in
-  axi) shift; [ "${1:-}" = status ] && printf '%s\n' "${FM_FAKE_AXI_STATUS:-}" ;;
+  axi) shift; { [ "$#" = 0 ] || [ "${1:-}" = status ]; } && printf '%s\n' "${FM_FAKE_AXI_STATUS:-}" ;;
 esac
 exit 0
 SH

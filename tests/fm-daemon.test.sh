@@ -1089,7 +1089,9 @@ test_handle_wake_terminal_signal_clears_pause_tracking() {
 run_housekeeping_with_config() {  # <state> <config-dir>
   (
     export FM_CONFIG_OVERRIDE="$2"
-    # shellcheck source=bin/fm-idle-compact.sh
+    # ShellCheck follows the source into fm-wake-lib.sh and misreads its local
+    # as a subshell assignment (SC2031); this re-source is not analyzed.
+    # shellcheck source=/dev/null
     . "$ROOT/bin/fm-idle-compact.sh"
     FM_STATE_OVERRIDE="$1" housekeeping "$1"
   )

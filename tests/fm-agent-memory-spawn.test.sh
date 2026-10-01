@@ -58,6 +58,10 @@ case "${1:-}" in
           -t) skip_next=1; continue ;;
           -l) continue ;;
           Enter|C-m) continue ;;
+          # A spawn types ". '<launch file>'"; log the staged command itself.
+          ". '"*"'") staged=${a#". '"}; staged=${staged%"'"}
+            if [ -f "$staged" ]; then a=$(cat "$staged"); fi
+            printf '%s\n' "$a" >> "$FM_FAKE_LAUNCH_LOG" ;;
           *) printf '%s\n' "$a" >> "$FM_FAKE_LAUNCH_LOG" ;;
         esac
       done
