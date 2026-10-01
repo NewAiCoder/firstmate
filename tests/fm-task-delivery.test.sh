@@ -382,6 +382,14 @@ STUB
   # shellcheck disable=SC2016  # single quotes are deliberate: the placeholders must stay literal
   assert_grep 'needs-decision [at=<epoch>] [key=nm-<run>-<step>]: ask-user findings=<id1>,<id2>,... file='"$home/data/promote-dod-no-mistakes/nm-<run>-findings.txt" "$payload" \
     "promoted no-mistakes worker did not receive the structured escalation event"
+  assert_grep "# Current no-mistakes intent contract" "$payload" \
+    "promoted no-mistakes worker did not receive the intent contract section"
+  assert_grep "append this one fixed sentence to the \`--intent\` string, verbatim" "$payload" \
+    "promoted no-mistakes worker was not told to append the manual-close ban to --intent"
+  assert_grep "\"Never run \`gh issue close\`, \`gh issue reopen\`, or any \`gh project\` command - issues close through the PR body's \`closes #N\` on merge, and the project board is not used.\"" "$payload" \
+    "promoted no-mistakes worker did not receive the fixed --intent sentence"
+  assert_no_grep "# Current no-mistakes intent contract" "$TMP_ROOT/promote-dod/payload-promote-dod-direct-pr" \
+    "promoted direct-PR worker received the no-mistakes intent contract"
   assert_grep "NEVER pass \`--yes\` (or \`-y\`)" "$payload" \
     "promoted no-mistakes worker did not receive the --yes prohibition"
   assert_grep "It is banned fleet-wide" "$payload" \

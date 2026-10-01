@@ -261,6 +261,12 @@ EOF
     printf '%s\n' "$PROMOTION_ASK_USER_BLOCK"
   fi
   printf '\n'
+  if [ "$MODE" = no-mistakes ]; then
+    printf '%s\n' '# Current no-mistakes intent contract' \
+      "Pass \`--intent\` as only the Captain's intent subsection body above, plus any later words the captain actually supplied; never include the Firstmate spec."
+    fm_intent_append_instruction
+    printf '\n'
+  fi
   fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE"
 }
 mkdir -p "$DATA/$ID"
