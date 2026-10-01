@@ -1,0 +1,32 @@
+--- before
+window=none
+backend=tmux
+worktree=/tmp/tmp.IQ1CZks6IV/home/wt
+kind=ship
+mode=no-mistakes
+nm_clone=/old/stale
+x_request=r1
+pr=https://github.com/example/repo/pull/7
+pr_head=a929c20bbf383b0b1ea65246b7d8fd3629cd52b9
+x_followups=2
+x_platform=slack
+VALID_BEFORE
+registered: t1 pipeline runs in /tmp/tmp.IQ1CZks6IV/clone
+armed: when-nm-state-t1 (pipeline-state watch on /tmp/tmp.IQ1CZks6IV/clone)
+rc=0
+--- after
+window=none
+backend=tmux
+worktree=/tmp/tmp.IQ1CZks6IV/home/wt
+kind=ship
+mode=no-mistakes
+x_request=r1
+nm_clone=/tmp/tmp.IQ1CZks6IV/clone
+pr=https://github.com/example/repo/pull/7
+pr_head=a929c20bbf383b0b1ea65246b7d8fd3629cd52b9
+x_followups=2
+x_platform=slack
+VALID_AFTER url=https://github.com/example/repo/pull/7
+nm_clone count: 1
+bad path rc=1
+RECORD_UNTOUCHED
