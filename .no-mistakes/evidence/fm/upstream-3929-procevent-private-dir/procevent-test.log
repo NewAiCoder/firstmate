@@ -1,0 +1,33 @@
+ok - no configured source means no generated state and no process
+ok - one blocking completion yields exactly one bounded normalized event
+ok - a home reached through a symlinked ancestor runs its sources normally
+not-autohandled: direct-src (left for the handler; still unacknowledged)
+ok - public start owns the process group recorded by its claim
+ok - public start never claims an inherited caller process group
+ok - an unhandled result survives restart and repeat drains, and only explicit acknowledgement stops its re-announcement
+ok - publication cannot race a handled acknowledgement
+ok - handled acknowledgement creation is private and fails safely
+ok - automatic application waits for durable publication and failed publication remains recoverable
+ok - a self-announcing adapter applies quietly and still publishes what it could not apply
+not-autohandled: ends-src (left for the handler; still unacknowledged)
+ok - an adapter-classified terminal result is captured once, announced, and retires its source automatically
+not-autohandled: open-src (left for the handler; still unacknowledged)
+ok - a source stays armed unless its own adapter classifies the result terminal
+not-autohandled: replace-src (left for the handler; still unacknowledged)
+ok - terminal retirement preserves and releases a concurrently replaced registration
+ok - failed terminal retirement is fail-closed and idempotently recoverable
+ok - one Send & End yields exactly one captured result, automatic retirement, and no recurring poll
+ok - an empty board close is captured and recorded handled without ever waking the captain
+ok - worker board replies and recovered listeners derive their server from the board session
+ok - worker-owned Lavish rounds deliver to the worker, acknowledge on re-arm, and stop at session end
+ok - a capture interrupted before its result commit does not wedge its source
+ok - an orphaned capture is not acknowledged by a worker it never reached
+ok - a worker-owned board is only armed for an owner its feedback can reach
+ok - an acknowledged note is never resurrected and stops ringing across repeated reconciles
+ok - acknowledging a terminal round concludes that round only
+ok - an interrupted conclude leaves the ended board unpollable and finishes on retry
+ok - a re-arm that cannot acknowledge its round leaves the running generation alone
+ok - a worker-owned board is armed once and re-armed only to acknowledge an open round
+ok - a board close carrying the captain's real answer is still announced
+ok - the shipped poll governor bounds an instantly returning source
+ok - a transient Lavish poll interruption is retried quietly and never announced

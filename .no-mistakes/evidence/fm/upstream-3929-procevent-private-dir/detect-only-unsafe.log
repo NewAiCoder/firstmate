@@ -1,0 +1,10 @@
+PRESENTATION_UNAVAILABLE: lavish-axi (requires >=0.1.77; install: npm install -g lavish-axi && lavish-axi setup hooks) - nonvisual work may proceed with plain-text decisions and reports; install or upgrade before using Lavish
+MISSING: quota-axi (install: npm install -g quota-axi)
+MISSING: tasks-axi (install: npm install -g tasks-axi)
+PROCEVENT: process-event state root is not a private directory - chmod 750 /tmp/tmp.ez5TRF99li/home/state to resume polling its registered sources
+
+real	0m0.503s
+user	0m0.149s
+sys	0m0.091s
+exit=0
+STATE UNCHANGED

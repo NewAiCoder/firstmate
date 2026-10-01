@@ -1,0 +1,7 @@
+ok - a symlinked state root names its bad-mode regression instead of reading as missing
+
+all procevent tests passed
+
+real	0m0.141s
+user	0m0.050s
+sys	0m0.041s

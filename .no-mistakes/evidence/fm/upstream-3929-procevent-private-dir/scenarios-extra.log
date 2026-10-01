@@ -1,0 +1,10 @@
+--- symlinked unsafe root
+PROCEVENT: process-event state root is not a private directory - chmod 750 /tmp/tmp.Mmj4XGwGVe/h/state to resume polling its registered sources
+--- private root
+0
+--- unsafe root + held lock dir (must not block)
+PROCEVENT: process-event state root is not a private directory - chmod 750 /tmp/tmp.ez5TRF99li/home/state to resume polling its registered sources
+
+real	0m0.516s
+user	0m0.147s
+sys	0m0.098s
