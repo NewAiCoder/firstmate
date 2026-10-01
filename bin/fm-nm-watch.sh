@@ -95,7 +95,15 @@ cmd_register_clone() {  # <task-id> <path>
   lock=$(fm_meta_lock_path "$META") || die "cannot resolve the task record lock"
   fm_lock_acquire_wait "$lock" || die "cannot lock the task record"
   tmp=$(mktemp "$STATE/.fm-nm-meta.XXXXXX") || { fm_lock_release "$lock"; die "cannot stage the task record"; }
-  if ! { { grep -v '^nm_clone=' "$META" || true; printf 'nm_clone=%s\n' "$path"; } > "$tmp" \
+  # The PR block (pr=, pr_head=, x_* lines) must stay last: fm_pr_metadata_identity_parse
+  # rejects any other line after the first pr=, so nm_clone= goes before it.
+  if ! { awk -v clone="$path" '
+        /^nm_clone=/ { next }
+        seen_pr && (/^pr=/ || /^pr_head=/ || /^x_(request|request_ts|followups|platform|reply_max_chars)=/) { tail = tail $0 "\n"; next }
+        /^pr=/ && !seen_pr { seen_pr = 1; tail = $0 "\n"; next }
+        { head = head $0 "\n" }
+        END { printf "%s", head; printf "nm_clone=%s\n", clone; printf "%s", tail }
+      ' "$META" > "$tmp" \
       && mv -f -- "$tmp" "$META"; }; then
     rm -f -- "$tmp"
     fm_lock_release "$lock"
