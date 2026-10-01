@@ -293,7 +293,7 @@ family_for_basename() {
     fm-documentation-audiences.test.sh|fm-ensure-agents-md.test.sh|fm-forge-detect.test.sh|fm-grok-harness.test.sh|\
     fm-fork-free-helpers.test.sh|\
     fm-harness-precedence.test.sh|\
-    fm-idle-compact.test.sh|\
+    fm-idle-compact.test.sh|fm-idle-compact-backstop.test.sh|fm-idle-compact-tick.test.sh|\
     fm-kimi-harness.test.sh|fm-devin-harness.test.sh|fm-muse-harness.test.sh|fm-rovo-harness.test.sh|fm-agy-harness.test.sh|fm-omp-harness.test.sh|fm-herdr-lab.test.sh|fm-lint.test.sh|\
     fm-lint-workflows.test.sh|\
     fm-operational-input.test.sh|fm-pi-primary-types.test.sh|\
@@ -774,9 +774,11 @@ tests/fm-herdr-version-floor-live-e2e.test.sh 50
 tests/fm-home-summary-refresh.test.sh 37057
 tests/fm-host-mirror-live-e2e.test.sh 79
 tests/fm-host-mirror.test.sh 11587
+tests/fm-idle-compact-backstop.test.sh 1900
 tests/fm-idle-compact-herdr-live-e2e.test.sh 117
 tests/fm-idle-compact-live-e2e.test.sh 150
-tests/fm-idle-compact.test.sh 6390
+tests/fm-idle-compact-tick.test.sh 1400
+tests/fm-idle-compact.test.sh 2600
 tests/fm-inactive-reconcile.test.sh 60823
 tests/fm-inbox.test.sh 6062
 tests/fm-jev-mem-guard.test.sh 336
