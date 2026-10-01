@@ -24,7 +24,7 @@ case "$BLOCK" in
 esac
 
 case "$BLOCK" in
-  *"paused: no-mistakes run in progress"*) echo "ok - the declared wait is unchanged" ;;
+  *"paused [at=<epoch>]: no-mistakes run in progress"*) echo "ok - the declared wait is unchanged" ;;
   *) echo "FAIL - the declared-wait line was lost"; FAIL=1 ;;
 esac
 
