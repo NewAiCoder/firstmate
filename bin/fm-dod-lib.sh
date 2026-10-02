@@ -397,6 +397,23 @@ There is no pull request, no \`gh-axi\` call, and no forge CI result to report: 
 EOF
 }
 
+# fm_dod_compaction_step sets compaction_step: the pause-for-compaction paragraph
+# only when this home has idle-compact enabled (the watcher's own
+# fm_idle_compact_threshold_minutes verdict on config/idle-compact, with the
+# same FM_HOME/config resolution as bin/fm-idle-compact.sh),
+# else a line telling the worker to start validation right after its commit.
+fm_dod_compaction_step() {
+  local home config
+  home="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
+  config="${FM_CONFIG_OVERRIDE:-${CONFIG:-$home/config}}"
+  # shellcheck source=/dev/null
+  if ( . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/fm-idle-compact.sh" && fm_idle_compact_threshold_minutes "$config" ) >/dev/null 2>&1; then
+    compaction_step="Right after that implementation commit lands, append \`paused [at=<epoch>]: awaiting compaction before validation\` to the status file and stop for this turn - do NOT run \`no-mistakes axi run\` yet. A worker cannot self-trigger compaction (\`/compact\` is a terminal built-in, not a tool you can invoke), so firstmate's idle-compact watcher reads that line - the phrase must START the line, and any detail you want to note (your measured lane size, the commit) may follow it - compacts your context while it is still warm, then rings you with a durable inbox message telling you to start the validation run - resume from that ring instead of waiting on a reply."
+  else
+    compaction_step="Right after that implementation commit lands, start validation: measure the lane below, then run \`no-mistakes axi run\`."
+  fi
+}
+
 fm_dod_block() {  # <mode> <task-id> [branch] [<forge>]
   local mode=$1 id=$2 forge=${4:-none}
   local branch=${3:-fm/$id}
@@ -479,12 +496,13 @@ The configured merge authority approves the ready branch, then firstmate merges 
 EOF
       ;;
     no-mistakes:*)
+      fm_dod_compaction_step
       cat <<EOF
 # Definition of done
 Delivery contract: mode=no-mistakes
 Ship branch: $branch
 The task is complete only when committed on your branch.
-Right after that implementation commit lands, append \`paused [at=<epoch>]: awaiting compaction before validation\` to the status file and stop for this turn - do NOT run \`no-mistakes axi run\` yet. A worker cannot self-trigger compaction (\`/compact\` is a terminal built-in, not a tool you can invoke), so firstmate's idle-compact watcher reads that line - the phrase must START the line, and any detail you want to note (your measured lane size, the commit) may follow it - compacts your context while it is still warm, then rings you with a durable inbox message telling you to start the validation run - resume from that ring instead of waiting on a reply.
+$compaction_step
 
 Before your FIRST \`no-mistakes axi run\`, measure this lane:
 \`bash $FM_ROOT/bin/fm-diff-size-check.sh .\`
