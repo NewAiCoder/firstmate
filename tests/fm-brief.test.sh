@@ -572,6 +572,17 @@ test_no_mistakes_dod_compaction_pause_follows_idle_compact_config() {
     "idle-compact on: the DOD must keep the compaction pause"
   assert_no_grep "start validation: measure the lane below" "$brief" \
     "idle-compact on: the DOD must not also say to start validation immediately"
+
+  local bad
+  for bad in 0 off; do
+    printf '%s\n' "$bad" > "$home/config/idle-compact"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "brief-compact-bad-$bad" some-proj --mode no-mistakes >/dev/null 2>&1
+    brief="$home/data/brief-compact-bad-$bad/brief.md"
+    assert_no_grep "awaiting compaction before validation" "$brief" \
+      "idle-compact '$bad' is disabled for the watcher: the DOD must not tell the worker to pause"
+    assert_grep "start validation: measure the lane below, then run" "$brief" \
+      "idle-compact '$bad': the DOD must tell the worker to start validation after its commit"
+  done
   pass "fm-brief.sh: no-mistakes DOD compaction pause follows config/idle-compact"
 }
 
