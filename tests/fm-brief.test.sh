@@ -551,10 +551,35 @@ test_ship_briefs_forbid_manual_issue_close_and_board_edits() {
 # Quota-efficiency worker rules (captain order 2026-09-04) belong only in the
 # no-mistakes DOD: a direct-PR or local-only brief never runs no-mistakes, and
 # a scout brief carries no delivery contract at all.
+# The compaction pause is only prescribed where idle-compact is enabled; a home
+# without config/idle-compact must send the worker straight to validation.
+test_no_mistakes_dod_compaction_pause_follows_idle_compact_config() {
+  local home brief
+  home="$TMP_ROOT/idle-compact-off-home"
+  mkdir -p "$home/data" "$home/config"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-compact-off some-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/brief-compact-off/brief.md"
+  assert_present "$brief" "brief was not scaffolded"
+  assert_no_grep "awaiting compaction before validation" "$brief" \
+    "idle-compact off: the DOD must not tell the worker to pause for compaction"
+  assert_grep "start validation: measure the lane below, then run" "$brief" \
+    "idle-compact off: the DOD must tell the worker to start validation after its commit"
+
+  : > "$home/config/idle-compact"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-compact-on some-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/brief-compact-on/brief.md"
+  assert_grep "awaiting compaction before validation" "$brief" \
+    "idle-compact on: the DOD must keep the compaction pause"
+  assert_no_grep "start validation: measure the lane below" "$brief" \
+    "idle-compact on: the DOD must not also say to start validation immediately"
+  pass "fm-brief.sh: no-mistakes DOD compaction pause follows config/idle-compact"
+}
+
 test_no_mistakes_dod_carries_quota_efficiency_rules() {
   local home id brief
   home="$TMP_ROOT/quota-efficiency-home"
-  mkdir -p "$home/data"
+  mkdir -p "$home/data" "$home/config"
+  : > "$home/config/idle-compact"
   id="brief-quota-nm1"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
@@ -1511,6 +1536,7 @@ test_ask_user_escalation_format
 test_ship_project_memory_wording
 test_ship_briefs_forbid_manual_issue_close_and_board_edits
 test_no_mistakes_dod_carries_quota_efficiency_rules
+test_no_mistakes_dod_compaction_pause_follows_idle_compact_config
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path
 test_herdr_lab_omission_is_loud_for_ship_and_scout
