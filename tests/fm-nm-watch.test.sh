@@ -90,8 +90,31 @@ test_register_clone_records_and_rearms() {
   pass "register-clone records the clone and re-arms the watch on it, refusing unusable paths"
 }
 
+test_register_clone_keeps_pr_block_last() {
+  local home id=clone-b clone meta
+  home=$(new_task_home prblock "$id")
+  clone="$TMP_ROOT/prblock-clone"
+  git clone -q "$home/wt" "$clone"
+  meta="$home/state/$id.meta"
+  # shellcheck source=bin/fm-pr-lib.sh
+  . "$ROOT/bin/fm-pr-lib.sh"
+
+  FM_HOME="$home" "$NMW" register-clone "$id" "$clone" >/dev/null 2>&1 || fail "register-clone failed without a PR block"
+  [ "$(tail -n 1 "$meta")" = "nm_clone=$clone" ] || fail "without a PR block nm_clone= is not last"
+
+  printf 'pr=https://github.com/example/repo/pull/7\npr_head=%s\n' "$(git -C "$home/wt" rev-parse HEAD)" >> "$meta"
+  for _ in 1 2; do
+    FM_HOME="$home" "$NMW" register-clone "$id" "$clone" >/dev/null 2>&1 || fail "register-clone failed with a PR block"
+    [ "$(grep -c '^nm_clone=' "$meta")" = 1 ] || fail "nm_clone= is not present exactly once"
+    [ "$(tail -n 2 "$meta" | cut -d= -f1 | paste -sd,)" = "pr,pr_head" ] || fail "the PR block is not last"
+    fm_pr_metadata_identity_parse "$meta" || fail "the merge-poll validator rejects the record after registration"
+  done
+  pass "register-clone keeps the PR block last so the merge poll stays valid"
+}
+
 test_rearm_converges_on_existing_watch
 test_arm_failure_raises_check_wake
 test_register_clone_records_and_rearms
+test_register_clone_keeps_pr_block_last
 
 echo "all fm-nm-watch tests passed"
